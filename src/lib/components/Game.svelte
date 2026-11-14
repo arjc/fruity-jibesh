@@ -53,6 +53,13 @@ const fruitImageUrls: Record<string, string> = {
 	watermelon: Watermelon
 };
 
+$effect(() => {
+	const favicon = document.getElementById('favicon');
+	if (favicon instanceof HTMLLinkElement) {
+		favicon.href = fruitImageOverrides.watermelon ?? Watermelon;
+	}
+});
+
 const { imagesPath = DEFAULT_IMAGES_PATH, soundsPath = DEFAULT_SOUNDS_PATH } = $props();
 
 // Game state reference
