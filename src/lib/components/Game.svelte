@@ -31,10 +31,11 @@ import { saveScore } from '../stores/db';
 import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 import {
 	applyFruitPreset,
+	applyFruitPresetTemporarily,
 	type FruitPresetPreview,
-	importFruitPresetData,
 	importFruitPresetFile,
-	listRecentFruitPresets
+	listRecentFruitPresets,
+	parseFruitPresetData
 } from '../stores/fruitPresets';
 import { GameState } from '../stores/game.svelte.js';
 // Import Utilities
@@ -69,7 +70,7 @@ const menuTips = [
 	'Click cycle fruit icons to customise names, sprites and sounds.',
 	'Shake your device to shake the container.',
 	'Click Save to save a preset in this browser.',
-	'Export a preset file to share it with friends.',
+	'Share a preset file with friends.',
 	'Use Load > Add from file to import a custom preset.'
 ];
 
@@ -94,6 +95,7 @@ let menuError = $state('');
 let menuBusy = $state(false);
 let gameReady = $state(false);
 let htmlPresetPending = $state(false);
+let communitySharedPreset = $state(false);
 let tipIndex = $state(0);
 let htmlPresetTransferCleanup: (() => void) | undefined;
 const MOTION_SHAKE_THRESHOLD = 15;
@@ -188,33 +190,18 @@ function getHtmlPresetTransferToken(): string | null {
 	return token;
 }
 
-function getImportedHtmlPresetName(fileName: string): string {
-	const baseName = fileName
-		.split(/[\\/]/)
-		.pop()
-		?.replace(/\.html?$/i, '')
-		.replace(/[<>:"|?*\p{Cc}]/gu, '-')
-		.trim()
-		.slice(0, 64);
-	return baseName || 'preset';
-}
-
-async function applyHtmlPresetTransfer(
+function applyHtmlPresetTransfer(
 	message: HtmlPresetTransferMessage,
 	opener: Window,
 	token: string
-): Promise<void> {
+): void {
 	menuBusy = true;
 	try {
-		const name = await importFruitPresetData(
-			message.payload,
-			getImportedHtmlPresetName(message.fileName)
-		);
-		selectedPresetName = name;
-		await refreshMenuPresets();
-		await applyFruitPreset(name);
+		const preset = parseFruitPresetData(message.payload);
+		applyFruitPresetTemporarily(preset);
+		communitySharedPreset = true;
 		gameState.setStatus('playing');
-		opener.postMessage({ type: 'fruity-jibesh-preset-complete', token, success: true, name }, '*');
+		opener.postMessage({ type: 'fruity-jibesh-preset-complete', token, success: true }, '*');
 	} catch (error) {
 		console.error('Failed to import a shared HTML preset:', error);
 		const messageText = error instanceof Error ? error.message : 'Could not import this preset.';
@@ -891,6 +878,19 @@ function handleShakeButton(): void {
         </section>
       {/if}
     {:else}
+      {#if communitySharedPreset}
+        <aside class="community-preset-banner" aria-label="Community-shared preset">
+          <span>Community-shared preset by an unknown user.</span>
+          <a
+            href="https://fruity-jibesh-vv4i.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Click here to view the original project
+          </a>
+          <span>This preset is temporary; use Save if you want to keep it.</span>
+        </aside>
+      {/if}
       <div class="header"><GameHeader {gameState} onShake={handleShakeButton} /></div>
       <div class="sidebar"><GameSidebar {gameState} /></div>
 
@@ -1386,5 +1386,23 @@ function handleShakeButton(): void {
 
   .header {
     grid-area: header;
+  }
+
+  .community-preset-banner {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.25em 0.65em;
+    padding: 0.55em 0.75em;
+    border: 2px solid #d99000;
+    background: #fff1a8;
+    color: #493100;
+    font-weight: 650;
+    text-align: center;
+  }
+
+  .community-preset-banner a {
+    color: #542b88;
+    text-decoration: underline;
   }
 </style>

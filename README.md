@@ -29,15 +29,15 @@ The original game, "Merge Big Watermelon" (合成大西瓜), was created by Mead
 - **Game over** when any fruit breaches the danger line at the top.
 - **Customize fruits** — change fruit names, images, and audio; audio can be uploaded or recorded as MP3.
 - **Save and load presets** — keep named presets in this browser, including their fruit names, images, and audio.
-- **Share presets** — export a self-contained HTML launcher to share as a document; it transfers the preset locally into the game without uploading it.
+- **Share presets** — share a self-contained HTML launcher through the device's share sheet; the first share also saves a local copy, and the preset transfers into the game without being uploaded.
 - **Preset start screen** — choose a recent preset, browse quick tips, and review the game instructions before starting.
 - **Offline Support** — no backend or analytics requests; game pages and assets (including physics WASM and audio) are cached via a service worker.
 - **Local high scores** — scores are saved on your device with IndexedDB.
 - **Installable PWA** — can be installed as a standalone application on mobile and desktop devices.
 
-Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. Exported HTML launchers bundle preset names, fruit custom names, images, and MP3 audio. The launcher opens the site and sends the data between browser windows with `postMessage`; preset data is not included in the URL or uploaded. Previously exported PNG, PDF, and `.arjcfruits` files can still be imported.
+Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. The shareable HTML file bundles preset names, fruit custom names, images, and MP3 audio. It opens the site and sends the data between browser windows with `postMessage`; preset data is not included in the URL or uploaded. Previously exported PNG, PDF, and `.arjcfruits` files can still be imported.
 
-To share through WhatsApp, send the exported `.html` file as a **document**, not as an image. The recipient should download it, open it in a browser (rather than WhatsApp's preview), and tap **Open preset in Fruity Jibesh**. The site saves the preset on that device and starts the game with it.
+On Android, use **Share** to open the system share sheet and choose WhatsApp. The first share also saves one local preset copy; later shares do not save another copy. You can edit the `.html` filename before sharing. The recipient should open the shared file in a browser (rather than WhatsApp's preview) and tap **Open preset in Fruity Jibesh**. The site saves the received preset on that device and starts the game with it.
 
 ---
 

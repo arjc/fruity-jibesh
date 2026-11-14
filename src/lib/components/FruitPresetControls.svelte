@@ -14,9 +14,14 @@ import {
 	saveFruitPreset
 } from '../stores/fruitPresets';
 
+const FIRST_SHARED_PRESET_KEY = 'subak-fruit-preset-shared-once';
+const SHARED_PRESET_NAME = 'Shared preset';
+
 let presetDialog = $state<HTMLDialogElement | null>(null);
-let presetMode = $state<'save' | 'load' | null>(null);
+let presetMode = $state<'save' | 'load' | 'share' | null>(null);
 let presetNameDraft = $state('');
+let shareFileNameDraft = $state('');
+let shareFileContent = $state<Blob | null>(null);
 let presetNames = $state<string[]>([]);
 let presetError = $state('');
 let presetStatus = $state('');
@@ -49,12 +54,7 @@ async function savePreset(): Promise<void> {
 	presetStatus = '';
 	presetBusy = true;
 	try {
-		await saveFruitPreset({
-			name: presetNameDraft,
-			names: { ...fruitDisplayNames },
-			images: { ...fruitImageOverrides },
-			sounds: { ...fruitMergeSounds }
-		});
+		await saveFruitPreset(getCurrentFruitPreset(presetNameDraft));
 		presetNames = listFruitPresets();
 		presetStatus = 'Preset saved.';
 		presetMode = 'load';
@@ -67,45 +67,135 @@ async function savePreset(): Promise<void> {
 	}
 }
 
-async function exportPreset(): Promise<void> {
+function getCurrentFruitPreset(name: string) {
+	return {
+		name,
+		names: { ...fruitDisplayNames },
+		images: { ...fruitImageOverrides },
+		sounds: { ...fruitMergeSounds }
+	};
+}
+
+function getUniqueSharedPresetName(): string {
+	const existingNames = new Set(listFruitPresets().map((name) => name.toLocaleLowerCase()));
+	if (!existingNames.has(SHARED_PRESET_NAME.toLocaleLowerCase())) return SHARED_PRESET_NAME;
+
+	for (let number = 2; ; number++) {
+		const candidate = `${SHARED_PRESET_NAME} (${number})`;
+		if (!existingNames.has(candidate.toLocaleLowerCase())) return candidate;
+	}
+}
+
+async function openSharePreset(): Promise<void> {
+	if (presetBusy || presetDialog?.open) return;
 	presetError = '';
 	presetStatus = '';
+	presetMode = 'share';
+	shareFileNameDraft = `${getFruitDisplayName('watermelon')} preset.html`;
+	shareFileContent = null;
 	presetBusy = true;
-	let objectUrl: string | null = null;
+	presetDialog?.showModal();
 	try {
 		await waitForPendingFruitMergeSoundSaves();
-		const presetName = `${getFruitDisplayName('watermelon')} preset`;
-		const file = await exportFruitPresetFile({
-			name: presetName,
-			names: { ...fruitDisplayNames },
-			images: { ...fruitImageOverrides },
-			sounds: { ...fruitMergeSounds }
-		});
-		const safeName = presetName
-			.replace(/[<>:"|?*]/g, '-')
-			.split('/')
-			.join('-')
-			.split('\\')
-			.join('-')
-			.trim();
-		const fileName = `${safeName || 'preset'}.html`;
-		objectUrl = URL.createObjectURL(file);
+		let firstShare = false;
+		if (!localStorage.getItem(FIRST_SHARED_PRESET_KEY)) {
+			await saveFruitPreset(getCurrentFruitPreset(getUniqueSharedPresetName()));
+			localStorage.setItem(FIRST_SHARED_PRESET_KEY, 'true');
+			firstShare = true;
+		}
+		shareFileContent = await exportFruitPresetFile(
+			getCurrentFruitPreset(`${getFruitDisplayName('watermelon')} preset`)
+		);
+		presetStatus = firstShare ? 'Saved a local copy. Ready to share.' : 'Ready to share.';
+	} catch (error) {
+		console.error('Failed to prepare fruit preset for sharing:', error);
+		presetError =
+			error instanceof Error ? error.message : 'Could not prepare this preset for sharing.';
+	} finally {
+		presetBusy = false;
+	}
+}
+
+function getShareFileName(name: string): string {
+	const baseName = name
+		.trim()
+		.replace(/\.html?$/i, '')
+		.replace(/[<>:"|?*\p{Cc}]/gu, '-')
+		.replace(/[\\/]/g, '-')
+		.slice(0, 64)
+		.trim();
+	return `${baseName || 'preset'}.html`;
+}
+
+function downloadShareFile(file: File): void {
+	const objectUrl = URL.createObjectURL(file);
+	try {
 		const link = document.createElement('a');
 		link.href = objectUrl;
-		link.download = fileName;
+		link.download = file.name;
 		document.body.append(link);
 		link.click();
 		link.remove();
-		window.setTimeout(() => {
-			if (objectUrl) URL.revokeObjectURL(objectUrl);
-		}, 1000);
-		presetStatus = `Exported ${fileName}.`;
+		window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 	} catch (error) {
-		if (objectUrl) URL.revokeObjectURL(objectUrl);
-		console.error('Failed to export fruit preset:', error);
-		presetError = error instanceof Error ? error.message : 'Could not export this preset.';
-	} finally {
+		URL.revokeObjectURL(objectUrl);
+		throw error;
+	}
+}
+
+function reportShareError(error: unknown): void {
+	if (error instanceof Error && error.name === 'AbortError') {
+		presetStatus = 'Sharing cancelled.';
+		return;
+	}
+	console.error('Failed to share fruit preset:', error);
+	presetError = error instanceof Error ? error.message : 'Could not share this preset.';
+}
+
+function sharePresetFile(): void {
+	if (!shareFileContent) return;
+
+	presetError = '';
+	presetStatus = '';
+	let file: File;
+	let supportsFileSharing = false;
+	try {
+		const fileName = getShareFileName(shareFileNameDraft);
+		file = new File([shareFileContent], fileName, { type: 'text/html' });
+		supportsFileSharing =
+			typeof navigator.share === 'function' &&
+			(typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] }));
+	} catch (error) {
+		reportShareError(error);
+		return;
+	}
+
+	if (!supportsFileSharing) {
+		try {
+			downloadShareFile(file);
+			presetStatus = 'File sharing is not available here; the HTML file was downloaded instead.';
+		} catch (error) {
+			reportShareError(error);
+		}
+		return;
+	}
+
+	const fileName = file.name;
+	presetBusy = true;
+	try {
+		void navigator
+			.share({ files: [file], title: fileName })
+			.then(() => {
+				presetStatus = `Shared ${fileName}.`;
+				presetDialog?.close();
+			})
+			.catch(reportShareError)
+			.finally(() => {
+				presetBusy = false;
+			});
+	} catch (error) {
 		presetBusy = false;
+		reportShareError(error);
 	}
 }
 
@@ -150,8 +240,13 @@ async function loadPreset(name: string): Promise<void> {
 <div class="preset-controls" aria-label="Fruit presets">
 	<button type="button" aria-label="Save preset" onclick={openSavePreset}>Save</button>
 	<button type="button" aria-label="Load preset" onclick={openLoadPreset}>Load</button>
-	<button type="button" aria-label="Export preset" disabled={presetBusy} onclick={() => void exportPreset()}>
-		Export
+	<button
+		type="button"
+		aria-label="Share preset"
+		disabled={presetBusy}
+		onclick={() => void openSharePreset()}
+	>
+		Share
 	</button>
 	{#if presetError}
 		<span class="preset-feedback error" role="alert">{presetError}</span>
@@ -169,7 +264,9 @@ async function loadPreset(name: string): Promise<void> {
 	}}
 >
 	<header class="preset-header">
-		<h3 id="preset-dialog-title">{presetMode === 'save' ? 'Save preset' : 'Load preset'}</h3>
+		<h3 id="preset-dialog-title">
+			{presetMode === 'save' ? 'Save preset' : presetMode === 'share' ? 'Share preset' : 'Load preset'}
+		</h3>
 		<button type="button" aria-label="Close presets" onclick={() => presetDialog?.close()}>
 			&times;
 		</button>
@@ -187,6 +284,33 @@ async function loadPreset(name: string): Promise<void> {
 			<div class="preset-name">
 				<input id="preset-name" bind:value={presetNameDraft} maxlength="32" autocomplete="off" />
 				<button type="submit" disabled={presetBusy}>Save</button>
+			</div>
+		</form>
+	{:else if presetMode === 'share'}
+		<form
+			class="preset-list"
+			onsubmit={(event) => {
+				event.preventDefault();
+				sharePresetFile();
+			}}
+		>
+			<p>The first share saves one copy in this browser. You can rename the HTML file here.</p>
+			<label for="share-file-name">File name</label>
+			<div class="preset-name">
+				<input
+					id="share-file-name"
+					bind:value={shareFileNameDraft}
+					maxlength="69"
+					autocomplete="off"
+					disabled={presetBusy}
+				/>
+				<button
+					type="submit"
+					aria-label="Share file"
+					disabled={presetBusy || !shareFileContent}
+				>
+					{presetBusy ? 'Preparing…' : 'Share'}
+				</button>
 			</div>
 		</form>
 	{:else}

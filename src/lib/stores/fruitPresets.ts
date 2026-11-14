@@ -7,12 +7,15 @@ import {
 	saveFruitPresetImages
 } from './db';
 import {
+	fruitDisplayNames,
+	fruitMergeSounds,
 	resetFruitDisplayName,
 	resetFruitMergeSound,
 	setFruitDisplayName,
 	setFruitMergeSound
 } from './fruitCustomizations.svelte';
 import {
+	fruitImageOverrides,
 	initializeFruitImageOverrides,
 	resetFruitImageOverride,
 	setFruitImageOverride
@@ -52,6 +55,8 @@ export interface FruitPreset {
 	images: Record<string, string>;
 	sounds: Record<string, Blob>;
 }
+
+export type FruitPresetContent = Omit<FruitPreset, 'name'>;
 
 export interface FruitPresetPreview {
 	name: string;
@@ -179,6 +184,10 @@ main{max-width:38rem;padding:2rem;border:1px solid #cbd5e1;background:white}
 h1{margin-top:0}
 button{padding:.8rem 1rem;border:0;background:#1d4ed8;color:white;font:inherit;cursor:pointer}
 #status{min-height:1.5em}
+.notice{margin-top:1.5rem;padding-top:1rem;border-top:1px solid #e2e8f0;color:#475569;font-size:.88rem;line-height:1.5}
+.notice h2{margin-bottom:.5rem;color:#172554;font-size:1.1rem}
+.notice p{margin:.65rem 0}
+.notice a{color:#1d4ed8}
 </style>
 </head>
 <body>
@@ -188,6 +197,13 @@ button{padding:.8rem 1rem;border:0;background:#1d4ed8;color:white;font:inherit;c
 <p>Tap below to open Fruity Jibesh and transfer the preset directly in your browser. The preset is not uploaded.</p>
 <button id="open" type="button">Open preset in Fruity Jibesh</button>
 <p id="status" role="status">Open this downloaded file in a browser, then tap the button.</p>
+<section class="notice" aria-labelledby="about-title">
+<h2 id="about-title">ARJC • Arjun M. Liji</h2>
+<p>Fruity Jibesh is a community fruit party! Its source is shared under <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a> (non-commercial).</p>
+<p>No tracking or background upload is built into this launcher. Your preset moves between browser tabs on your device; opening the game still makes a normal visit to its website.</p>
+<p>This is a user-shared preset, not a file reviewed or endorsed by ARJC. The launcher has no remote scripts, but files can be changed after sharing—nobody can promise every copy is virus-free. Only open files from people you trust.</p>
+<p><a href="https://arjc.github.io/" target="_blank" rel="noopener noreferrer">Arjun M. Liji (arjc.github.io)</a> is not responsible for community-shared or modified preset contents or resulting damages, to the extent allowed by law. Your legal rights still apply.</p>
+</section>
 </main>
 <script id="preset-data" type="application/json">${safePresetJson}</script>
 <script>
@@ -232,7 +248,7 @@ button{padding:.8rem 1rem;border:0;background:#1d4ed8;color:white;font:inherit;c
       }
     } else if (event.data.type === 'fruity-jibesh-preset-complete') {
       status.textContent = event.data.success
-        ? 'Preset imported and saved. The game is ready in the Fruity Jibesh tab.'
+        ? 'Preset loaded! Choose Save in the game if you want to keep it.'
         : (event.data.error || 'The preset could not be imported.');
       finish();
     }
@@ -553,6 +569,18 @@ export async function applyFruitPreset(name: string): Promise<void> {
 	}
 }
 
+export function applyFruitPresetTemporarily(preset: FruitPresetContent): void {
+	for (const fruit of FRUITS) {
+		delete fruitDisplayNames[fruit.name];
+		delete fruitImageOverrides[fruit.name];
+		delete fruitMergeSounds[fruit.name];
+	}
+
+	Object.assign(fruitDisplayNames, preset.names);
+	Object.assign(fruitImageOverrides, preset.images);
+	Object.assign(fruitMergeSounds, preset.sounds);
+}
+
 function markFruitPresetUsed(name: string): void {
 	const presets = getStoredPresets().map((preset) =>
 		getPresetId(preset.name) === getPresetId(name) ? { ...preset, lastUsedAt: Date.now() } : preset
@@ -583,10 +611,7 @@ export async function exportFruitPresetFile(preset: FruitPreset): Promise<Blob> 
 	return createPresetHtml(JSON.stringify(file));
 }
 
-export async function importFruitPresetData(
-	payload: ArrayBuffer | Uint8Array,
-	fileName: string
-): Promise<string> {
+export function parseFruitPresetData(payload: ArrayBuffer | Uint8Array): FruitPresetContent {
 	const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
 	if (bytes.length > MAX_PRESET_FILE_SIZE_BYTES) {
 		throw new Error('The preset file is too large to import.');
@@ -607,14 +632,21 @@ export async function importFruitPresetData(
 		throw new Error('This is not a supported fruit preset file.');
 	}
 
-	const name = uniquePresetName(fileName.trim());
-	if (!name) throw new Error('The preset file must have a name.');
-	await saveFruitPreset({
-		name,
+	return {
 		names: validateNames(parsed.names),
 		images: validateImages(parsed.images),
 		sounds: validateSounds(parsed.sounds)
-	});
+	};
+}
+
+export async function importFruitPresetData(
+	payload: ArrayBuffer | Uint8Array,
+	fileName: string
+): Promise<string> {
+	const preset = parseFruitPresetData(payload);
+	const name = uniquePresetName(fileName.trim());
+	if (!name) throw new Error('The preset file must have a name.');
+	await saveFruitPreset({ name, ...preset });
 	return name;
 }
 

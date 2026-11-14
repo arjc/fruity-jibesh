@@ -1,6 +1,11 @@
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/svelte';
-import { afterEach, describe, expect, it } from 'vitest';
-import { saveFruitPresetImages, saveFruitPresetSounds } from '../../stores/db';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	getFruitImageOverrides as getStoredFruitImageOverrides,
+	getFruitMergeSounds as getStoredFruitMergeSounds,
+	saveFruitPresetImages,
+	saveFruitPresetSounds
+} from '../../stores/db';
 import {
 	fruitDisplayNames,
 	fruitMergeSounds,
@@ -17,10 +22,12 @@ import {
 	setFruitImageOverride
 } from '../../stores/fruitImageOverrides.svelte';
 import {
+	applyFruitPresetTemporarily,
 	exportFruitPresetFile,
 	getFruitPreset,
 	importFruitPresetData,
-	importFruitPresetFile
+	importFruitPresetFile,
+	parseFruitPresetData
 } from '../../stores/fruitPresets';
 import FruitPresetControls from '../FruitPresetControls.svelte';
 
@@ -30,6 +37,7 @@ afterEach(async () => {
 	await resetFruitImageOverride('apple');
 	await resetFruitMergeSound('apple');
 	localStorage.removeItem('subak-fruit-presets');
+	localStorage.removeItem('subak-fruit-preset-shared-once');
 	await saveFruitPresetSounds('weekend', {});
 	await saveFruitPresetSounds('shared preset', {});
 	await saveFruitPresetImages('weekend', {});
@@ -100,6 +108,10 @@ describe('FruitPresetControls', () => {
 		expect(html).toContain('window.open(targetOrigin');
 		expect(html).toContain('fruity-jibesh-preset-data');
 		expect(html).toContain("connect-src 'none'");
+		expect(html).toContain('ARJC • Arjun M. Liji');
+		expect(html).toContain('CC BY-NC 4.0');
+		expect(html).toContain('nobody can promise every copy is virus-free');
+		expect(html).toContain('not responsible for community-shared or modified preset contents');
 		const presetJson =
 			/<script id="preset-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)?.[1];
 		expect(presetJson).toBeTruthy();
@@ -119,6 +131,106 @@ describe('FruitPresetControls', () => {
 		expect(Array.from(new Uint8Array(await importedSound.arrayBuffer()))).toEqual([
 			0xff, 0xfb, 0x90, 0x64
 		]);
+	});
+
+	it('applies a community preset in memory without persisting its settings', async () => {
+		const serialized = {
+			format: 'arjcfruits',
+			version: 1,
+			name: 'Community preset',
+			names: { apple: 'Ruby' },
+			images: { apple: 'data:image/png;base64,cHJlc2V0' },
+			sounds: { apple: { type: 'audio/mpeg', data: '//uQZA==' } }
+		};
+		const previousNames = { ...fruitDisplayNames };
+		const previousImages = { ...fruitImageOverrides };
+		const previousSounds = { ...fruitMergeSounds };
+		const displayNamesBefore = localStorage.getItem('subak-fruit-display-names');
+		const legacyImagesBefore = localStorage.getItem('subak-fruit-image-overrides');
+		const presetsBefore = localStorage.getItem('subak-fruit-presets');
+		const storedImagesBefore = await getStoredFruitImageOverrides();
+		const storedSoundsBefore = await getStoredFruitMergeSounds();
+
+		try {
+			const preset = parseFruitPresetData(new TextEncoder().encode(JSON.stringify(serialized)));
+			applyFruitPresetTemporarily(preset);
+
+			expect(fruitDisplayNames.apple).toBe('Ruby');
+			expect(fruitImageOverrides.apple).toBe('data:image/png;base64,cHJlc2V0');
+			expect(fruitMergeSounds.apple).toBeInstanceOf(Blob);
+			expect(localStorage.getItem('subak-fruit-display-names')).toBe(displayNamesBefore);
+			expect(localStorage.getItem('subak-fruit-image-overrides')).toBe(legacyImagesBefore);
+			expect(localStorage.getItem('subak-fruit-presets')).toBe(presetsBefore);
+			expect(await getStoredFruitImageOverrides()).toEqual(storedImagesBefore);
+			expect(await getStoredFruitMergeSounds()).toEqual(storedSoundsBefore);
+		} finally {
+			for (const fruitName of Object.keys(fruitDisplayNames)) delete fruitDisplayNames[fruitName];
+			for (const fruitName of Object.keys(fruitImageOverrides))
+				delete fruitImageOverrides[fruitName];
+			for (const fruitName of Object.keys(fruitMergeSounds)) delete fruitMergeSounds[fruitName];
+			Object.assign(fruitDisplayNames, previousNames);
+			Object.assign(fruitImageOverrides, previousImages);
+			Object.assign(fruitMergeSounds, previousSounds);
+		}
+	});
+
+	it('shares an editable HTML file and saves a local copy only on its first share', async () => {
+		const originalShare = Object.getOwnPropertyDescriptor(navigator, 'share');
+		const originalCanShare = Object.getOwnPropertyDescriptor(navigator, 'canShare');
+		const share = vi.fn(async (_data: ShareData) => {});
+		const canShare = vi.fn(() => true);
+		Object.defineProperty(navigator, 'share', { configurable: true, value: share });
+		Object.defineProperty(navigator, 'canShare', { configurable: true, value: canShare });
+
+		try {
+			const { container, getByRole, getByLabelText } = render(FruitPresetControls);
+			const dialog = container.querySelector('dialog');
+			if (!(dialog instanceof HTMLDialogElement)) throw new Error('Preset dialog did not render.');
+
+			await fireEvent.click(getByRole('button', { name: 'Share preset' }));
+			await waitFor(() => {
+				expect((getByRole('button', { name: 'Share file' }) as HTMLButtonElement).disabled).toBe(
+					false
+				);
+			});
+			await fireEvent.input(getByLabelText('File name'), {
+				target: { value: 'friend bundle' }
+			});
+			await fireEvent.click(getByRole('button', { name: 'Share file' }));
+			await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+
+			const firstShareData = share.mock.calls[0][0];
+			expect(firstShareData.files?.[0].name).toBe('friend bundle.html');
+			expect(firstShareData.files?.[0].type).toBe('text/html');
+			expect(localStorage.getItem('subak-fruit-preset-shared-once')).toBe('true');
+			expect(JSON.parse(localStorage.getItem('subak-fruit-presets') ?? '[]')).toContainEqual(
+				expect.objectContaining({ name: 'Shared preset' })
+			);
+
+			await waitFor(() => {
+				expect(dialog.open).toBe(false);
+				expect((getByRole('button', { name: 'Share preset' }) as HTMLButtonElement).disabled).toBe(
+					false
+				);
+			});
+			setFruitDisplayName('apple', 'Ruby');
+			await fireEvent.click(getByRole('button', { name: 'Share preset' }));
+			await waitFor(() => {
+				expect((getByRole('button', { name: 'Share file' }) as HTMLButtonElement).disabled).toBe(
+					false
+				);
+			});
+			await fireEvent.click(getByRole('button', { name: 'Share file' }));
+			await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
+
+			expect((await getFruitPreset('Shared preset'))?.names.apple).toBeUndefined();
+			expect(JSON.parse(localStorage.getItem('subak-fruit-presets') ?? '[]')).toHaveLength(1);
+		} finally {
+			if (originalShare) Object.defineProperty(navigator, 'share', originalShare);
+			else Reflect.deleteProperty(navigator, 'share');
+			if (originalCanShare) Object.defineProperty(navigator, 'canShare', originalCanShare);
+			else Reflect.deleteProperty(navigator, 'canShare');
+		}
 	});
 
 	it('continues to import legacy .arjcfruits files', async () => {
