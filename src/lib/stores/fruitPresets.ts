@@ -27,6 +27,7 @@ const FILE_VERSION = 1;
 const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_SOUND_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_PRESET_FILE_SIZE_BYTES = 110 * 1024 * 1024;
+const MAX_PRESET_HTML_OVERHEAD_BYTES = 64 * 1024;
 const MAX_PRESET_IMAGE_FILE_SIZE_BYTES = MAX_PRESET_FILE_SIZE_BYTES + 1024 * 1024;
 const PDF_ATTACHMENT_SUBTYPE = '/Subtype /application#2Fvnd.arjcfruits+json';
 const PNG_INSTRUCTION_WIDTH = 1200;
@@ -195,6 +196,7 @@ button{padding:.8rem 1rem;border:0;background:#1d4ed8;color:white;font:inherit;c
 <h1>Fruity Jibesh preset</h1>
 <p>This file contains a preset and its custom images, names, and audio.</p>
 <p>Tap below to open Fruity Jibesh and transfer the preset directly in your browser. The preset is not uploaded.</p>
+<p>If pop-ups do not work, <a href="https://fruity-jibesh-vv4i.vercel.app/" target="_self">open the project in this tab</a>, then choose Import from file and select this downloaded HTML file.</p>
 <button id="open" type="button">Open preset in Fruity Jibesh</button>
 <p id="status" role="status">Open this downloaded file in a browser, then tap the button.</p>
 <section class="notice" aria-labelledby="about-title">
@@ -266,14 +268,14 @@ button{padding:.8rem 1rem;border:0;background:#1d4ed8;color:white;font:inherit;c
     targetWindow = window.open(targetOrigin + '/#fruity-preset=' + transferToken, '_blank');
     if (!targetWindow) {
       finish();
-      status.textContent = 'Your browser blocked the new tab. Allow pop-ups for this file and try again.';
+      status.textContent = 'Pop-up blocked. Use the open-in-this-tab link above, then import this file.';
       return;
     }
     button.disabled = true;
     status.textContent = 'Opening Fruity Jibesh and waiting for a secure local connection...';
     timeoutId = window.setTimeout(() => {
       finish();
-      status.textContent = 'The connection timed out. Keep this file open and try again.';
+      status.textContent = 'Could not connect. Use the open-in-this-tab link above, then import this file.';
     }, 60000);
   });
 })();
@@ -637,6 +639,33 @@ export function parseFruitPresetData(payload: ArrayBuffer | Uint8Array): FruitPr
 		images: validateImages(parsed.images),
 		sounds: validateSounds(parsed.sounds)
 	};
+}
+
+export async function parseFruitPresetHtmlFile(file: File): Promise<FruitPresetContent> {
+	if (!/\.html?$/i.test(file.name)) {
+		throw new Error('Choose a Fruity Jibesh HTML preset file.');
+	}
+	if (file.size > MAX_PRESET_FILE_SIZE_BYTES + MAX_PRESET_HTML_OVERHEAD_BYTES) {
+		throw new Error('The preset file is too large to import.');
+	}
+
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	let html: string;
+	try {
+		html = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+	} catch {
+		throw new Error('This HTML preset file is not valid UTF-8.');
+	}
+
+	const dataTag = '<script id="preset-data" type="application/json">';
+	const dataStart = html.indexOf(dataTag);
+	const jsonStart = dataStart + dataTag.length;
+	const jsonEnd = html.indexOf('</script>', jsonStart);
+	if (dataStart < 0 || jsonEnd < jsonStart) {
+		throw new Error('This HTML file does not contain a Fruity Jibesh preset.');
+	}
+
+	return parseFruitPresetData(encodeText(html.slice(jsonStart, jsonEnd)));
 }
 
 export async function importFruitPresetData(

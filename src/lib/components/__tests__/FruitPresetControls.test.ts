@@ -27,7 +27,8 @@ import {
 	getFruitPreset,
 	importFruitPresetData,
 	importFruitPresetFile,
-	parseFruitPresetData
+	parseFruitPresetData,
+	parseFruitPresetHtmlFile
 } from '../../stores/fruitPresets';
 import FruitPresetControls from '../FruitPresetControls.svelte';
 
@@ -112,6 +113,14 @@ describe('FruitPresetControls', () => {
 		expect(html).toContain('CC BY-NC 4.0');
 		expect(html).toContain('nobody can promise every copy is virus-free');
 		expect(html).toContain('not responsible for community-shared or modified preset contents');
+		expect(html).toContain('open the project in this tab');
+		expect(html).toContain('choose Import from file and select this downloaded HTML file');
+		expect(html).toContain('Pop-up blocked. Use the open-in-this-tab link above');
+		const parsedHtmlPreset = await parseFruitPresetHtmlFile(
+			new File([fileContent], 'community.html', { type: 'text/html' })
+		);
+		expect(parsedHtmlPreset.names.apple).toBe('Ruby');
+		expect(localStorage.getItem('subak-fruit-presets')).toBeNull();
 		const presetJson =
 			/<script id="preset-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)?.[1];
 		expect(presetJson).toBeTruthy();

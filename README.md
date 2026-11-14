@@ -37,7 +37,7 @@ The original game, "Merge Big Watermelon" (合成大西瓜), was created by Mead
 
 Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. The shareable HTML file bundles preset names, fruit custom names, images, and MP3 audio. It opens the site and sends the data between browser windows with `postMessage`; preset data is not included in the URL or uploaded. Previously exported PNG, PDF, and `.arjcfruits` files can still be imported.
 
-On Android, use **Share** to open the system share sheet and choose WhatsApp. The first share also saves one local preset copy; later shares do not save another copy. You can edit the `.html` filename before sharing. The recipient should open the shared file in a browser (rather than WhatsApp's preview) and tap **Open preset in Fruity Jibesh**. The site saves the received preset on that device and starts the game with it.
+On Android, use **Share** to open the system share sheet and choose WhatsApp. The first share also saves one local preset copy; later shares do not save another copy. You can edit the `.html` filename before sharing. The recipient should open the shared file in a browser (rather than WhatsApp's preview) and tap **Open preset in Fruity Jibesh**. If pop-ups are blocked, use the launcher's same-tab link, then choose **Import from file** and select the downloaded HTML. The community preset runs temporarily and is saved on the recipient's device only if they choose **Save**.
 
 ---
 

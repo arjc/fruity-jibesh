@@ -32,10 +32,12 @@ import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 import {
 	applyFruitPreset,
 	applyFruitPresetTemporarily,
+	type FruitPresetContent,
 	type FruitPresetPreview,
 	importFruitPresetFile,
 	listRecentFruitPresets,
-	parseFruitPresetData
+	parseFruitPresetData,
+	parseFruitPresetHtmlFile
 } from '../stores/fruitPresets';
 import { GameState } from '../stores/game.svelte.js';
 // Import Utilities
@@ -154,6 +156,11 @@ async function handleMenuPresetFileChange(event: Event): Promise<void> {
 	menuError = '';
 	menuBusy = true;
 	try {
+		if (/\.html?$/i.test(file.name)) {
+			startCommunitySharedPreset(await parseFruitPresetHtmlFile(file));
+			return;
+		}
+
 		selectedPresetName = await importFruitPresetFile(file);
 		await refreshMenuPresets();
 	} catch (error) {
@@ -163,6 +170,12 @@ async function handleMenuPresetFileChange(event: Event): Promise<void> {
 		input.value = '';
 		menuBusy = false;
 	}
+}
+
+function startCommunitySharedPreset(preset: FruitPresetContent): void {
+	applyFruitPresetTemporarily(preset);
+	communitySharedPreset = true;
+	gameState.setStatus('playing');
 }
 
 interface HtmlPresetTransferMessage {
@@ -198,9 +211,7 @@ function applyHtmlPresetTransfer(
 	menuBusy = true;
 	try {
 		const preset = parseFruitPresetData(message.payload);
-		applyFruitPresetTemporarily(preset);
-		communitySharedPreset = true;
-		gameState.setStatus('playing');
+		startCommunitySharedPreset(preset);
 		opener.postMessage({ type: 'fruity-jibesh-preset-complete', token, success: true }, '*');
 	} catch (error) {
 		console.error('Failed to import a shared HTML preset:', error);
@@ -220,7 +231,8 @@ function receiveHtmlPresetTransfer(token: string): void {
 	const opener = window.opener;
 	if (!opener) {
 		htmlPresetPending = false;
-		menuError = 'Open this page from the downloaded Fruity Jibesh HTML file to import its preset.';
+		menuError =
+			'The browser blocked the local handoff. Choose Import from file and select the downloaded HTML preset.';
 		return;
 	}
 
@@ -789,6 +801,7 @@ function handleShakeButton(): void {
   <div
     class="game responsive-font-size"
     class:start-screen-active={gameState.status === 'uninitialized'}
+    class:community-shared-preset={communitySharedPreset}
     role="application"
     aria-label="Fruit merging game area"
     tabindex="0"
@@ -844,7 +857,7 @@ function handleShakeButton(): void {
           <label class="menu-preset-card import-preset-card" class:disabled={!gameReady || menuBusy}>
             <input
               type="file"
-              accept=".png,image/png,.pdf,application/pdf,.arjcfruits,application/json"
+              accept=".html,.htm,text/html,.png,image/png,.pdf,application/pdf,.arjcfruits,application/json"
               aria-label="Import preset from file"
               disabled={!gameReady || menuBusy}
               onchange={handleMenuPresetFileChange}
@@ -1042,9 +1055,17 @@ function handleShakeButton(): void {
     font-weight: 400;
     line-height: 1.5;
 
+    &.community-shared-preset {
+      grid-template-areas: "banner banner" "header header" "sidebar gameplay";
+    }
+
     @media (aspect-ratio < 0.65) {
       grid-template-columns: 1fr;
       grid-template-areas: "sidebar" "gameplay" "header";
+
+      &.community-shared-preset {
+        grid-template-areas: "banner" "sidebar" "gameplay" "header";
+      }
     }
 
     .start-screen {
@@ -1389,6 +1410,7 @@ function handleShakeButton(): void {
   }
 
   .community-preset-banner {
+    grid-area: banner;
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
