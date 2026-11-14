@@ -24,6 +24,7 @@ const FILE_VERSION = 1;
 const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_SOUND_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_PRESET_FILE_SIZE_BYTES = 110 * 1024 * 1024;
+const PDF_ATTACHMENT_SUBTYPE = '/Subtype /application#2Fvnd.arjcfruits+json';
 const FRUIT_NAMES = new Set(FRUITS.map(({ name }) => name));
 
 export interface FruitPreset {
@@ -64,6 +65,133 @@ function encodeBase64(bytes: Uint8Array): string {
 		binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
 	}
 	return btoa(binary);
+}
+
+function encodeText(value: string): Uint8Array {
+	return new TextEncoder().encode(value);
+}
+
+function concatenateBytes(chunks: Uint8Array[]): Uint8Array {
+	const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+	const bytes = new Uint8Array(length);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return bytes;
+}
+
+function findBytes(data: Uint8Array, pattern: Uint8Array, start = 0): number {
+	const prefix = new Uint32Array(pattern.length);
+	for (let index = 1, matched = 0; index < pattern.length; index++) {
+		while (matched > 0 && pattern[index] !== pattern[matched]) {
+			matched = prefix[matched - 1];
+		}
+		if (pattern[index] === pattern[matched]) matched++;
+		prefix[index] = matched;
+	}
+
+	for (let index = start, matched = 0; index < data.length; index++) {
+		while (matched > 0 && data[index] !== pattern[matched]) {
+			matched = prefix[matched - 1];
+		}
+		if (data[index] === pattern[matched]) matched++;
+		if (matched === pattern.length) return index - pattern.length + 1;
+	}
+	return -1;
+}
+
+function createPresetPdf(payload: Uint8Array): Blob {
+	const header = encodeText('%PDF-1.7\n');
+	const pageContent = encodeText(
+		'BT\n' +
+			'/F1 20 Tf\n' +
+			'72 720 Td\n' +
+			'(Fruity Jibesh preset) Tj\n' +
+			'/F1 12 Tf\n' +
+			'0 -40 Td\n' +
+			'(Save this file and goto) Tj\n' +
+			'0 -22 Td\n' +
+			'(https://fruity-jibesh-vv4i.vercel.app/.) Tj\n' +
+			'0 -22 Td\n' +
+			'(Choose "+ import from file" and import this pdf file there...) Tj\n' +
+			'ET\n'
+	);
+	const embeddedFileHeader = encodeText(
+		`7 0 obj\n<< /Type /EmbeddedFile ${PDF_ATTACHMENT_SUBTYPE} /Length ${payload.length} >>\nstream\n`
+	);
+	const objects = [
+		encodeText(
+			'1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(preset.arjcfruits) 6 0 R] >> >> >>\nendobj\n'
+		),
+		encodeText('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n'),
+		encodeText(
+			'3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n'
+		),
+		encodeText('4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n'),
+		concatenateBytes([
+			encodeText(`5 0 obj\n<< /Length ${pageContent.length} >>\nstream\n`),
+			pageContent,
+			encodeText('endstream\nendobj\n')
+		]),
+		encodeText(
+			'6 0 obj\n<< /Type /Filespec /F (preset.arjcfruits) /UF (preset.arjcfruits) /Desc (Fruity Jibesh preset data) /EF << /F 7 0 R >> >>\nendobj\n'
+		),
+		concatenateBytes([embeddedFileHeader, payload, encodeText('\nendstream\nendobj\n')])
+	];
+
+	const chunks = [header];
+	const offsets = [0];
+	let fileLength = header.length;
+	for (const object of objects) {
+		offsets.push(fileLength);
+		chunks.push(object);
+		fileLength += object.length;
+	}
+
+	const crossReferenceOffset = fileLength;
+	const crossReference = [
+		`xref\n0 ${objects.length + 1}\n`,
+		'0000000000 65535 f \n',
+		...offsets.slice(1).map((offset) => `${offset.toString().padStart(10, '0')} 00000 n \n`),
+		`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${crossReferenceOffset}\n%%EOF\n`
+	].join('');
+	chunks.push(encodeText(crossReference));
+	return new Blob(chunks, { type: 'application/pdf' });
+}
+
+function extractPresetJsonFromPdf(bytes: Uint8Array): Uint8Array {
+	const subtypeIndex = findBytes(bytes, encodeText(PDF_ATTACHMENT_SUBTYPE));
+	if (subtypeIndex < 0) {
+		throw new Error('This PDF does not contain a Fruity Jibesh preset.');
+	}
+
+	const lengthMarker = encodeText('/Length ');
+	const lengthIndex = findBytes(bytes, lengthMarker, subtypeIndex);
+	const streamIndex = findBytes(bytes, encodeText('stream\n'), subtypeIndex);
+	if (lengthIndex < 0 || streamIndex < 0 || lengthIndex > streamIndex) {
+		throw new Error('The preset attachment in this PDF is malformed.');
+	}
+
+	const lengthStart = lengthIndex + lengthMarker.length;
+	let lengthEnd = lengthStart;
+	while (lengthEnd < streamIndex && bytes[lengthEnd] >= 48 && bytes[lengthEnd] <= 57) {
+		lengthEnd++;
+	}
+	const payloadLength = Number(new TextDecoder().decode(bytes.subarray(lengthStart, lengthEnd)));
+	const payloadStart = streamIndex + encodeText('stream\n').length;
+	if (
+		lengthEnd === lengthStart ||
+		!Number.isSafeInteger(payloadLength) ||
+		payloadLength <= 0 ||
+		payloadLength > MAX_PRESET_FILE_SIZE_BYTES ||
+		payloadStart + payloadLength > bytes.length
+	) {
+		throw new Error('The preset attachment in this PDF is invalid.');
+	}
+
+	return bytes.slice(payloadStart, payloadStart + payloadLength);
 }
 
 function decodeBase64(value: string, maximumBytes: number): Uint8Array {
@@ -290,12 +418,15 @@ export async function exportFruitPresetFile(preset: FruitPreset): Promise<Blob> 
 		images: preset.images,
 		sounds
 	};
-	return new Blob([JSON.stringify(file)], { type: 'application/json' });
+	return createPresetPdf(encodeText(JSON.stringify(file)));
 }
 
 export async function importFruitPresetFile(file: File): Promise<string> {
-	if (!file.name.toLowerCase().endsWith('.arjcfruits')) {
-		throw new Error('Choose an .arjcfruits preset file.');
+	const lowerFileName = file.name.toLowerCase();
+	const isPdf = lowerFileName.endsWith('.pdf');
+	const isLegacyPreset = lowerFileName.endsWith('.arjcfruits');
+	if (!isPdf && !isLegacyPreset) {
+		throw new Error('Choose a Fruity Jibesh PDF preset file.');
 	}
 	if (file.size > MAX_PRESET_FILE_SIZE_BYTES) {
 		throw new Error('The preset file is too large to import.');
@@ -303,9 +434,16 @@ export async function importFruitPresetFile(file: File): Promise<string> {
 
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(await file.text());
+		const json = isPdf
+			? new TextDecoder('utf-8', { fatal: true }).decode(
+					extractPresetJsonFromPdf(new Uint8Array(await file.arrayBuffer()))
+				)
+			: await file.text();
+		parsed = JSON.parse(json);
 	} catch {
-		throw new Error('This preset file is not valid JSON.');
+		throw new Error(
+			isPdf ? 'This PDF does not contain valid preset data.' : 'This preset file is not valid JSON.'
+		);
 	}
 	if (
 		!isRecord(parsed) ||
@@ -316,7 +454,8 @@ export async function importFruitPresetFile(file: File): Promise<string> {
 		throw new Error('This is not a supported fruit preset file.');
 	}
 
-	const fileName = file.name.slice(0, -'.arjcfruits'.length).trim();
+	const extension = isPdf ? '.pdf' : '.arjcfruits';
+	const fileName = file.name.slice(0, -extension.length).trim();
 	if (!fileName) throw new Error('The preset file must have a name.');
 	const name = uniquePresetName(fileName);
 	await saveFruitPreset({

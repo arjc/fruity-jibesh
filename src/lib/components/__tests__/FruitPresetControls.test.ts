@@ -82,7 +82,7 @@ describe('FruitPresetControls', () => {
 		});
 	});
 
-	it('exports a shareable preset file and imports it as a saved preset', async () => {
+	it('exports a PDF preset with import instructions and imports it as a saved preset', async () => {
 		const fileContent = await exportFruitPresetFile({
 			name: 'Embedded preset name',
 			names: { apple: 'Ruby' },
@@ -93,12 +93,14 @@ describe('FruitPresetControls', () => {
 				})
 			}
 		});
-		const serialized = JSON.parse(await fileContent.text());
-		expect(serialized.name).toBe('Embedded preset name');
-		expect(serialized.names.apple).toBe('Ruby');
-		expect(serialized.sounds.apple.type).toBe('audio/mpeg');
-		expect(serialized.sounds.apple.data).toBeTruthy();
-		const file = new File([fileContent], 'weekend.arjcfruits', { type: 'application/json' });
+		expect(fileContent.type).toBe('application/pdf');
+		const pdfContents = await fileContent.text();
+		expect(pdfContents.startsWith('%PDF-1.7')).toBe(true);
+		expect(pdfContents).toContain('(Save this file and goto) Tj');
+		expect(pdfContents).toContain(
+			'(Choose "+ import from file" and import this pdf file there...) Tj'
+		);
+		const file = new File([fileContent], 'weekend.pdf', { type: 'application/pdf' });
 
 		const importedName = await importFruitPresetFile(file);
 		const preset = await getFruitPreset(importedName);
@@ -107,6 +109,61 @@ describe('FruitPresetControls', () => {
 		expect(preset?.names.apple).toBe('Ruby');
 		expect(preset?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
 		expect(preset?.sounds.apple).toBeInstanceOf(Blob);
+	});
+
+	it('continues to import legacy .arjcfruits files', async () => {
+		const serialized = {
+			format: 'arjcfruits',
+			version: 1,
+			name: 'Legacy preset',
+			names: { apple: 'Ruby' },
+			images: {},
+			sounds: {}
+		};
+		const file = new File([JSON.stringify(serialized)], 'legacy.arjcfruits', {
+			type: 'application/json'
+		});
+
+		const importedName = await importFruitPresetFile(file);
+		expect(importedName).toBe('Legacy');
+		expect((await getFruitPreset(importedName))?.names.apple).toBe('Ruby');
+	});
+
+	it('imports a PDF from the Load dialog and saves it locally', async () => {
+		localStorage.setItem(
+			'subak-fruit-presets',
+			JSON.stringify([
+				{
+					name: 'legacy',
+					names: {},
+					images: { apple: 'data:image/png;base64,cHJlc2V0' }
+				}
+			])
+		);
+		const content = await exportFruitPresetFile({
+			name: 'Embedded preset name',
+			names: { apple: 'Ruby' },
+			images: { apple: 'data:image/png;base64,cHJlc2V0' },
+			sounds: {}
+		});
+		const file = new File([content], 'shared.pdf', { type: 'application/pdf' });
+		const { getByRole, getByLabelText } = render(FruitPresetControls);
+
+		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
+		await fireEvent.change(getByLabelText('Add preset from file'), {
+			target: { files: [file] }
+		});
+
+		await waitFor(() => {
+			expect(fruitDisplayNames.apple).toBe('Ruby');
+			expect(localStorage.getItem('subak-fruit-presets')).toContain('"name":"shared"');
+		});
+		expect((await getFruitPreset('shared'))?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
+		const storedPresets = JSON.parse(localStorage.getItem('subak-fruit-presets') ?? '[]');
+		expect(storedPresets.every((preset: { images?: unknown }) => preset.images === undefined)).toBe(
+			true
+		);
+		expect((await getFruitPreset('legacy'))?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
 	});
 
 	it('waits for an in-progress audio save before exporting', async () => {
@@ -126,42 +183,5 @@ describe('FruitPresetControls', () => {
 		finishSave?.();
 		await waiting;
 		expect(finishedWaiting).toBe(true);
-	});
-
-	it('loads an imported file from the Load dialog and saves it locally', async () => {
-		localStorage.setItem(
-			'subak-fruit-presets',
-			JSON.stringify([
-				{
-					name: 'legacy',
-					names: {},
-					images: { apple: 'data:image/png;base64,cHJlc2V0' }
-				}
-			])
-		);
-		const content = await exportFruitPresetFile({
-			name: 'Embedded preset name',
-			names: { apple: 'Ruby' },
-			images: { apple: 'data:image/png;base64,cHJlc2V0' },
-			sounds: {}
-		});
-		const file = new File([content], 'shared.arjcfruits', { type: 'application/json' });
-		const { getByRole, getByLabelText } = render(FruitPresetControls);
-
-		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
-		await fireEvent.change(getByLabelText('Add preset from file'), {
-			target: { files: [file] }
-		});
-
-		await waitFor(() => {
-			expect(fruitDisplayNames.apple).toBe('Ruby');
-			expect(localStorage.getItem('subak-fruit-presets')).toContain('"name":"shared"');
-		});
-		expect((await getFruitPreset('shared'))?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
-		const storedPresets = JSON.parse(localStorage.getItem('subak-fruit-presets') ?? '[]');
-		expect(storedPresets.every((preset: { images?: unknown }) => preset.images === undefined)).toBe(
-			true
-		);
-		expect((await getFruitPreset('legacy'))?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
 	});
 });
