@@ -75,7 +75,6 @@ const displayName = $derived(getFruitDisplayName(name));
   }
 
   .fruit.danger {
-    border-radius: 50%;
     outline: 3px solid hotpink;
   }
 </style>

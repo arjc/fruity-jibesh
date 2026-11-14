@@ -1,6 +1,8 @@
-import { cleanup, render } from '@testing-library/svelte';
+import { cleanup, render, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { saveFruitPresetSounds } from '../../stores/db';
+import { saveFruitPreset } from '../../stores/fruitPresets';
 import { GameState } from '../../stores/game.svelte.js';
 import Game from '../Game.svelte';
 
@@ -16,9 +18,11 @@ beforeEach(() => {
 	vi.spyOn(proto, 'destroy').mockImplementation(() => {});
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.restoreAllMocks();
 	cleanup();
+	localStorage.removeItem('subak-fruit-presets');
+	await saveFruitPresetSounds('menu preset', {});
 });
 
 function getBeforeUnloadHandler(addSpy: ReturnType<typeof vi.spyOn>) {
@@ -191,5 +195,33 @@ describe('Game tab-visibility pause/resume', () => {
 		handler?.();
 
 		expect(setStatus).not.toHaveBeenCalledWith('playing');
+	});
+});
+
+describe('Game main menu', () => {
+	it('shows preset choices, import, instructions, and a tip', async () => {
+		localStorage.removeItem('subak-fruit-presets');
+		await saveFruitPreset({
+			name: 'Menu preset',
+			names: {},
+			images: {},
+			sounds: {}
+		});
+		proto.init.mockImplementationOnce(async function (this: any) {
+			this.audioManager = { isMuted: false, toggleMute: vi.fn() };
+		});
+
+		const { getByRole, getByLabelText, getByText } = render(Game);
+		await waitFor(() => {
+			expect((getByRole('button', { name: 'Start Game' }) as HTMLButtonElement).disabled).toBe(
+				false
+			);
+		});
+
+		expect(getByRole('button', { name: 'Default' })).not.toBeNull();
+		expect(getByRole('button', { name: 'Menu preset' })).not.toBeNull();
+		expect(getByLabelText('Import preset from file')).not.toBeNull();
+		expect(getByRole('heading', { name: 'How to play' })).not.toBeNull();
+		expect(getByText(/^Tip:/)).not.toBeNull();
 	});
 });

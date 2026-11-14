@@ -119,7 +119,6 @@ function requestClose() {
 		/* Visual Styling */
 		background: var(--color-background-light);
 		color: var(--color-text);
-		border-radius: 8px;
 		box-shadow: hsla(0, 0%, 0%, 0.2) 0 2px 2px;
 
 		/* Sizing and Scrolling */

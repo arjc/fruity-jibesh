@@ -29,6 +29,12 @@ import Pineapple from '../images/fruits/pineapple.png?url';
 import Watermelon from '../images/fruits/watermelon.png?url';
 import { saveScore } from '../stores/db';
 import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
+import {
+	applyFruitPreset,
+	type FruitPresetPreview,
+	importFruitPresetFile,
+	listRecentFruitPresets
+} from '../stores/fruitPresets';
 import { GameState } from '../stores/game.svelte.js';
 // Import Utilities
 import { clamp } from '../utils/clamp';
@@ -53,6 +59,19 @@ const fruitImageUrls: Record<string, string> = {
 	watermelon: Watermelon
 };
 
+const menuPreviewFruits = [
+	FRUITS[0],
+	FRUITS[Math.floor(FRUITS.length / 2)],
+	FRUITS[FRUITS.length - 1]
+];
+const menuTips = [
+	'Click cycle fruit icons to customise names, sprites and sounds.',
+	'Shake your device to shake the container.',
+	'Click Save to save a preset in this browser.',
+	'Export a preset file to share it with friends.',
+	'Use Load > Add from file to import a custom preset.'
+];
+
 $effect(() => {
 	const favicon = document.getElementById('favicon');
 	if (favicon instanceof HTMLLinkElement) {
@@ -68,6 +87,12 @@ const gameState = new GameState({
 	soundsPath
 });
 let showDebugMenu = $state(false);
+let menuPresets = $state<FruitPresetPreview[]>([]);
+let selectedPresetName = $state('Default');
+let menuError = $state('');
+let menuBusy = $state(false);
+let gameReady = $state(false);
+let tipIndex = $state(0);
 const MOTION_SHAKE_THRESHOLD = 15;
 const GRAVITY_SHAKE_THRESHOLD = 12;
 const MOTION_SHAKE_COOLDOWN_MS = 1000;
@@ -88,6 +113,52 @@ let canvasCtx: CanvasRenderingContext2D | null = null;
 let borderLightColor = 'hsla(0, 0%, 0%, 0.075)';
 // Pre-rendered restricted-area band; rebuilt only on resize, blitted every frame.
 let restrictedAreaCanvas: HTMLCanvasElement | null = null;
+
+function refreshMenuPresets(): void {
+	try {
+		menuPresets = listRecentFruitPresets(4);
+	} catch (error) {
+		console.error('Failed to load main-menu presets:', error);
+		menuError = 'Saved presets could not be loaded.';
+	}
+}
+
+function getMenuPreviewImage(preset: FruitPresetPreview | null, fruitName: string): string {
+	return preset?.images[fruitName] ?? fruitImageUrls[fruitName] ?? '';
+}
+
+async function startSelectedPreset(): Promise<void> {
+	menuError = '';
+	menuBusy = true;
+	try {
+		await applyFruitPreset(selectedPresetName);
+		gameState.setStatus('playing');
+	} catch (error) {
+		console.error(`Failed to load main-menu preset ${selectedPresetName}:`, error);
+		menuError = error instanceof Error ? error.message : 'Could not load this preset.';
+	} finally {
+		menuBusy = false;
+	}
+}
+
+async function handleMenuPresetFileChange(event: Event): Promise<void> {
+	const input = event.currentTarget as HTMLInputElement;
+	const file = input.files?.[0];
+	if (!file) return;
+
+	menuError = '';
+	menuBusy = true;
+	try {
+		selectedPresetName = await importFruitPresetFile(file);
+		refreshMenuPresets();
+	} catch (error) {
+		console.error('Failed to import a main-menu preset:', error);
+		menuError = error instanceof Error ? error.message : 'Could not import this preset.';
+	} finally {
+		input.value = '';
+		menuBusy = false;
+	}
+}
 
 // Device pixel ratio, capped at 2 to bound offscreen sprite memory.
 function getDpr() {
@@ -263,8 +334,23 @@ onMount(() => {
 		window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 	showDebugMenu = isDebugQuery && isLocalhost;
 
+	refreshMenuPresets();
+	const tipTimer = window.setInterval(() => {
+		if (gameState.status === 'uninitialized') {
+			tipIndex = (tipIndex + 1) % menuTips.length;
+		}
+	}, 5000);
+
 	// Only initialize physics and audio on client
-	gameState.init();
+	void gameState
+		.init()
+		.then(() => {
+			gameReady = true;
+		})
+		.catch((error: unknown) => {
+			console.error('Failed to initialize the game:', error);
+			menuError = 'The game could not be initialized. Please reload and try again.';
+		});
 
 	if (gameRef) {
 		borderLightColor =
@@ -380,6 +466,7 @@ onMount(() => {
 	gameState.onUpdate = renderCanvas;
 
 	return function onUnmount() {
+		window.clearInterval(tipTimer);
 		window.removeEventListener('beforeunload', handleBeforeUnload);
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
 		window.removeEventListener('devicemotion', handleDeviceMotion);
@@ -597,7 +684,77 @@ function handleShakeButton(): void {
     {#if gameState.status === 'uninitialized'}
       <section class="start-screen" aria-labelledby="game-title">
         <h1 id="game-title">Fruity Jibesh</h1>
-        <button onclick={() => gameState.setStatus('playing')}>Start Game</button>
+        <p class="menu-subtitle">Choose your fruit preset</p>
+
+        <div class="preset-grid" aria-label="Choose a preset">
+          <button
+            type="button"
+            class="menu-preset-card"
+            class:selected={selectedPresetName === 'Default'}
+            aria-pressed={selectedPresetName === 'Default'}
+            disabled={!gameReady || menuBusy}
+            onclick={() => (selectedPresetName = 'Default')}
+          >
+            <span class="preset-sprites">
+              {#each menuPreviewFruits as fruit (fruit.name)}
+                <img src={getMenuPreviewImage(null, fruit.name)} alt="" />
+              {/each}
+            </span>
+            <span class="preset-card-name">Default</span>
+          </button>
+
+          {#each menuPresets as preset (preset.name)}
+            <button
+              type="button"
+              class="menu-preset-card"
+              class:selected={selectedPresetName === preset.name}
+              aria-pressed={selectedPresetName === preset.name}
+              disabled={!gameReady || menuBusy}
+              onclick={() => (selectedPresetName = preset.name)}
+            >
+              <span class="preset-sprites">
+                {#each menuPreviewFruits as fruit (fruit.name)}
+                  <img src={getMenuPreviewImage(preset, fruit.name)} alt="" />
+                {/each}
+              </span>
+              <span class="preset-card-name">{preset.name}</span>
+            </button>
+          {/each}
+
+          <label class="menu-preset-card import-preset-card" class:disabled={!gameReady || menuBusy}>
+            <input
+              type="file"
+              accept=".arjcfruits,application/json"
+              aria-label="Import preset from file"
+              disabled={!gameReady || menuBusy}
+              onchange={handleMenuPresetFileChange}
+            />
+            <span class="import-plus" aria-hidden="true">+</span>
+            <span class="preset-card-name">Import from file</span>
+          </label>
+        </div>
+
+        <button
+          class="start-game-button"
+          disabled={!gameReady || menuBusy}
+          onclick={() => void startSelectedPreset()}
+        >
+          {menuBusy ? 'Loading preset…' : gameReady ? 'Start Game' : 'Loading game…'}
+        </button>
+
+        <section class="how-to-play" aria-labelledby="how-to-play-title">
+          <h2 id="how-to-play-title">How to play</h2>
+          <ol>
+            <li>Drop fruit into the container.</li>
+            <li>Match two fruits to merge them into the next fruit.</li>
+            <li>Keep fruit below the top line or the game ends.</li>
+          </ol>
+        </section>
+
+        <p class="menu-tip" role="status">Tip: {menuTips[tipIndex]}</p>
+        {#if menuError}
+          <p class="menu-error" role="alert">{menuError}</p>
+        {/if}
       </section>
     {:else}
       <div class="header"><GameHeader {gameState} onShake={handleShakeButton} /></div>
@@ -730,7 +887,6 @@ function handleShakeButton(): void {
     --color-honeydew: hsl(86.2, 69.2%, 66.9%);
     --color-watermelon: hsl(74, 74.1%, 45.5%);
 
-    --border-radius: 1em;
 
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 4fr);
@@ -745,7 +901,6 @@ function handleShakeButton(): void {
     background: linear-gradient(180deg, #e7def0 0%, #f6dbe4 55%, #f4edbd 100%);
     color: var(--color-text);
     border: 1px solid var(--color-border);
-    border-radius: var(--border-radius);
 
     font-family: Inter, system-ui, sans-serif;
     font-optical-sizing: auto;
@@ -760,12 +915,19 @@ function handleShakeButton(): void {
 
     .start-screen {
       display: flex;
-      min-height: min(80svh, 700px);
+      grid-column: 1 / -1;
+      grid-row: 1 / -1;
+      width: 100%;
+      max-height: min(94svh, 900px);
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 1.5em;
-      color: white;
+      gap: 0.75em;
+      overflow-y: auto;
+      padding: clamp(0.75rem, 3vw, 1.5rem);
+      color: var(--color-text);
+      background: linear-gradient(180deg, #e7def0 0%, #f6dbe4 55%, #f4edbd 100%);
+      text-align: center;
     }
 
     &.start-screen-active {
@@ -777,21 +939,143 @@ function handleShakeButton(): void {
 
     .start-screen h1 {
       margin: 0;
-      font-size: clamp(3rem, 12vw, 6rem);
+      font-size: clamp(2.2rem, 8vw, 4rem);
       font-weight: 750;
       letter-spacing: -0.06em;
     }
 
-    .start-screen button {
-      padding: 0.8em 1.6em;
-      border: 0;
-      border-radius: 999px;
+    .menu-subtitle {
+      margin: 0;
+      font-size: 1.05em;
+      font-weight: 600;
+    }
+
+    .preset-grid {
+      display: grid;
+      width: min(100%, 34rem);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.55rem;
+    }
+
+    .menu-preset-card {
+      position: relative;
+      display: grid;
+      min-width: 0;
+      min-height: 5.2rem;
+      height: auto;
+      justify-items: center;
+      gap: 0.2rem;
+      padding: 0.4rem;
+      border: 1px solid rgb(255 255 255 / 55%);
       background: var(--color-background-light);
-      color: #3b1c6e;
-      font: inherit;
-      font-size: 1.2em;
-      font-weight: 700;
+      color: var(--color-text);
+      text-align: center;
+    }
+
+    .menu-preset-card.selected {
+      border: 2px solid white;
+      box-shadow: 0 0 0 2px var(--color-text);
+    }
+
+    .preset-sprites {
+      display: flex;
+      width: 100%;
+      height: 2.7rem;
+      align-items: center;
+      justify-content: center;
+      gap: 0.1rem;
+      overflow: hidden;
+    }
+
+    .preset-sprites img {
+      width: 31%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .preset-card-name {
+      width: 100%;
+      overflow: hidden;
+      font-size: 0.78em;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .import-preset-card {
+      align-content: center;
       cursor: pointer;
+    }
+
+    .import-preset-card input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .import-preset-card:focus-within {
+      outline: 2px solid white;
+      outline-offset: 2px;
+    }
+
+    .import-plus {
+      font-size: 2em;
+      line-height: 1;
+    }
+
+    .import-preset-card.disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .start-game-button {
+      min-width: 12rem;
+      height: 2.4em;
+      padding: 0.45em 1em;
+      background: var(--color-background-light);
+      color: var(--color-text);
+      font: inherit;
+      font-weight: 700;
+    }
+
+    .how-to-play {
+      width: min(100%, 34rem);
+      padding: 0.65rem 0.8rem;
+      /* border-left: 3px solid var(--color-background-light); */
+      background: rgb(255 255 255 / 45%);
+      text-align: left;
+    }
+
+    .how-to-play h2 {
+      margin: 0 0 0.25rem;
+      font-size: 1em;
+    }
+
+    .how-to-play ol {
+      margin: 0;
+      padding-left: 1.3rem;
+      font-size: 0.85em;
+    }
+
+    .menu-tip,
+    .menu-error {
+      width: min(100%, 34rem);
+      margin: 0;
+      font-size: 0.82em;
+    }
+
+    .menu-error {
+      color: #9b1c31;
+      font-weight: 600;
+    }
+
+    @media (max-width: 360px) {
+      .preset-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
 
     .merge-notices {
@@ -868,7 +1152,6 @@ function handleShakeButton(): void {
       height: 2em;
       background-color: var(--color-background);
       border: none;
-      border-radius: 0.5em;
       padding: 0.25em 0.75em;
       color: var(--color-text);
       box-shadow:
@@ -925,7 +1208,6 @@ function handleShakeButton(): void {
     position: relative;
     box-shadow: inset hsla(0, 0%, 0%, 0.2) 0 2px 2px;
     background: linear-gradient(180deg, #ddd2e9 0%, #f1c7d6 55%, #eee39a 100%);
-    border-radius: 1em;
     cursor: s-resize;
 
     /* Removed cursor: pointer as interaction is on wrapper */

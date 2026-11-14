@@ -446,7 +446,6 @@ onDestroy(() => {
 		right: 10px;
 		bottom: 0;
 		left: 10px;
-		border-radius: 25px;
 	}
 
 	.fruitGroups {
@@ -480,7 +479,6 @@ onDestroy(() => {
 		height: 1.15em;
 		place-items: center;
 		border: 1px solid var(--color-background-light);
-		border-radius: 50%;
 		background: var(--color-text);
 		color: var(--color-background-light);
 		cursor: pointer;
@@ -503,7 +501,6 @@ onDestroy(() => {
 		padding: 0.9rem;
 		overflow: auto;
 		border: 1px solid var(--color-border);
-		border-radius: 1rem;
 		background: var(--color-background-light);
 		color: var(--color-text);
 		box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
@@ -602,7 +599,6 @@ onDestroy(() => {
 		min-width: 0;
 		padding: 0.4rem 0.55rem;
 		border: 2px solid var(--color-border);
-		border-radius: 0.2rem;
 		background: white;
 		color: var(--color-text);
 		font: inherit;
@@ -630,7 +626,6 @@ onDestroy(() => {
 		place-items: center;
 		padding: 0;
 		border: 1px solid var(--color-border);
-		border-radius: 50%;
 		background: transparent;
 		color: var(--color-text);
 		font: inherit;

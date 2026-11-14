@@ -14,6 +14,11 @@ import {
 	resetFruitImageOverride,
 	setFruitImageOverride
 } from '../../stores/fruitImageOverrides.svelte';
+import {
+	exportFruitPresetFile,
+	getFruitPreset,
+	importFruitPresetFile
+} from '../../stores/fruitPresets';
 import FruitPresetControls from '../FruitPresetControls.svelte';
 
 afterEach(async () => {
@@ -23,6 +28,7 @@ afterEach(async () => {
 	await resetFruitMergeSound('apple');
 	localStorage.removeItem('subak-fruit-presets');
 	await saveFruitPresetSounds('weekend', {});
+	await saveFruitPresetSounds('shared preset', {});
 });
 
 describe('FruitPresetControls', () => {
@@ -63,6 +69,49 @@ describe('FruitPresetControls', () => {
 			expect(fruitDisplayNames.apple).toBeUndefined();
 			expect(fruitImageOverrides.apple).toBeUndefined();
 			expect(fruitMergeSounds.apple).toBeUndefined();
+		});
+	});
+
+	it('exports a shareable preset file and imports it as a saved preset', async () => {
+		const fileContent = await exportFruitPresetFile({
+			name: 'Embedded preset name',
+			names: { apple: 'Ruby' },
+			images: { apple: 'data:image/png;base64,cHJlc2V0' },
+			sounds: {
+				apple: new Blob([Uint8Array.from([0xff, 0xfb, 0x90, 0x64])], {
+					type: 'audio/mpeg'
+				})
+			}
+		});
+		const file = new File([fileContent], 'weekend.arjcfruits', { type: 'application/json' });
+
+		const importedName = await importFruitPresetFile(file);
+		const preset = await getFruitPreset(importedName);
+
+		expect(importedName).toBe('Weekend');
+		expect(preset?.names.apple).toBe('Ruby');
+		expect(preset?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
+		expect(preset?.sounds.apple).toBeInstanceOf(Blob);
+	});
+
+	it('loads an imported file from the Load dialog and saves it locally', async () => {
+		const content = await exportFruitPresetFile({
+			name: 'Embedded preset name',
+			names: { apple: 'Ruby' },
+			images: {},
+			sounds: {}
+		});
+		const file = new File([content], 'shared.arjcfruits', { type: 'application/json' });
+		const { getByRole, getByLabelText } = render(FruitPresetControls);
+
+		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
+		await fireEvent.change(getByLabelText('Add preset from file'), {
+			target: { files: [file] }
+		});
+
+		await waitFor(() => {
+			expect(fruitDisplayNames.apple).toBe('Ruby');
+			expect(localStorage.getItem('subak-fruit-presets')).toContain('"name":"shared"');
 		});
 	});
 });

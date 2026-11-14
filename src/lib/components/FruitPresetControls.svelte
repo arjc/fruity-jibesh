@@ -1,19 +1,17 @@
 <script lang="ts">
-import { FRUITS } from '../constants';
 import {
 	fruitDisplayNames,
 	fruitMergeSounds,
-	resetFruitDisplayName,
-	resetFruitMergeSound,
-	setFruitDisplayName,
-	setFruitMergeSound
+	getFruitDisplayName
 } from '../stores/fruitCustomizations.svelte';
+import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 import {
-	fruitImageOverrides,
-	resetFruitImageOverride,
-	setFruitImageOverride
-} from '../stores/fruitImageOverrides.svelte';
-import { getFruitPreset, listFruitPresets, saveFruitPreset } from '../stores/fruitPresets';
+	applyFruitPreset,
+	exportFruitPresetFile,
+	importFruitPresetFile,
+	listFruitPresets,
+	saveFruitPreset
+} from '../stores/fruitPresets';
 
 let presetDialog = $state<HTMLDialogElement | null>(null);
 let presetMode = $state<'save' | 'load' | null>(null);
@@ -68,34 +66,67 @@ async function savePreset(): Promise<void> {
 	}
 }
 
+async function exportPreset(): Promise<void> {
+	presetError = '';
+	presetStatus = '';
+	presetBusy = true;
+	let objectUrl: string | null = null;
+	try {
+		const file = await exportFruitPresetFile({
+			name: `${getFruitDisplayName('watermelon')} preset`,
+			names: { ...fruitDisplayNames },
+			images: { ...fruitImageOverrides },
+			sounds: { ...fruitMergeSounds }
+		});
+		const fileName = 'preset.arjcfruits';
+		objectUrl = URL.createObjectURL(file);
+		const link = document.createElement('a');
+		link.href = objectUrl;
+		link.download = fileName;
+		document.body.append(link);
+		link.click();
+		link.remove();
+		window.setTimeout(() => {
+			if (objectUrl) URL.revokeObjectURL(objectUrl);
+		}, 1000);
+		presetStatus = `Exported ${fileName}.`;
+	} catch (error) {
+		if (objectUrl) URL.revokeObjectURL(objectUrl);
+		console.error('Failed to export fruit preset:', error);
+		presetError = error instanceof Error ? error.message : 'Could not export this preset.';
+	} finally {
+		presetBusy = false;
+	}
+}
+
+async function handlePresetFileChange(event: Event): Promise<void> {
+	const input = event.currentTarget as HTMLInputElement;
+	const file = input.files?.[0];
+	if (!file) return;
+
+	presetError = '';
+	presetStatus = '';
+	presetBusy = true;
+	try {
+		const name = await importFruitPresetFile(file);
+		presetNames = listFruitPresets();
+		await loadPreset(name);
+	} catch (error) {
+		console.error('Failed to import fruit preset:', error);
+		presetError = error instanceof Error ? error.message : 'Could not import this preset.';
+	} finally {
+		input.value = '';
+		presetBusy = false;
+	}
+}
+
 async function loadPreset(name: string): Promise<void> {
 	presetError = '';
 	presetStatus = '';
 	presetBusy = true;
 	try {
-		const preset = name === 'Default' ? undefined : await getFruitPreset(name);
-		if (name !== 'Default' && !preset) {
-			throw new Error('This preset could not be found.');
-		}
-
-		for (const fruit of FRUITS) {
-			resetFruitDisplayName(fruit.name);
-			resetFruitImageOverride(fruit.name);
-			await resetFruitMergeSound(fruit.name);
-		}
-
-		if (preset) {
-			for (const [fruitName, displayName] of Object.entries(preset.names)) {
-				setFruitDisplayName(fruitName, displayName);
-			}
-			for (const [fruitName, imageUrl] of Object.entries(preset.images)) {
-				setFruitImageOverride(fruitName, imageUrl);
-			}
-			for (const [fruitName, sound] of Object.entries(preset.sounds)) {
-				await setFruitMergeSound(fruitName, sound);
-			}
-		}
-
+		await applyFruitPreset(name);
+		presetNames = listFruitPresets();
 		presetDialog?.close();
 	} catch (error) {
 		console.error(`Failed to load fruit preset ${name}:`, error);
@@ -109,6 +140,14 @@ async function loadPreset(name: string): Promise<void> {
 <div class="preset-controls" aria-label="Fruit presets">
 	<button type="button" aria-label="Save preset" onclick={openSavePreset}>Save</button>
 	<button type="button" aria-label="Load preset" onclick={openLoadPreset}>Load</button>
+	<button type="button" aria-label="Export preset" disabled={presetBusy} onclick={() => void exportPreset()}>
+		Export
+	</button>
+	{#if presetError}
+		<span class="preset-feedback error" role="alert">{presetError}</span>
+	{:else if presetStatus}
+		<span class="preset-feedback" role="status">{presetStatus}</span>
+	{/if}
 </div>
 
 <dialog
@@ -142,6 +181,16 @@ async function loadPreset(name: string): Promise<void> {
 		</form>
 	{:else}
 		<section class="preset-list" aria-label="Saved presets">
+			<label class="add-preset">
+				<span>+ Add from file</span>
+				<input
+					type="file"
+					accept=".arjcfruits,application/json"
+					aria-label="Add preset from file"
+					disabled={presetBusy}
+					onchange={handlePresetFileChange}
+				/>
+			</label>
 			<button type="button" disabled={presetBusy} onclick={() => void loadPreset('Default')}>
 				Default
 			</button>
@@ -174,6 +223,16 @@ async function loadPreset(name: string): Promise<void> {
 		padding: 0.35em 0.55em;
 	}
 
+	.preset-feedback {
+		max-width: 14rem;
+		align-self: center;
+		font-size: 0.7em;
+	}
+
+	.preset-feedback.error {
+		color: #7d173f;
+	}
+
 	.preset-dialog {
 		position: fixed;
 		width: min(22rem, calc(100vw - 2rem));
@@ -182,7 +241,6 @@ async function loadPreset(name: string): Promise<void> {
 		padding: 1rem;
 		overflow: auto;
 		border: 1px solid var(--color-border);
-		border-radius: 1rem;
 		background: var(--color-background-light);
 		color: var(--color-text);
 		box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
@@ -220,12 +278,30 @@ async function loadPreset(name: string): Promise<void> {
 		text-align: left;
 	}
 
+	.add-preset {
+		position: relative;
+		display: flex;
+		min-height: 2rem;
+		align-items: center;
+		padding: 0.35rem 0.5rem;
+		border: 1px dashed var(--color-border);
+		cursor: pointer;
+	}
+
+	.add-preset input {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		opacity: 0;
+		cursor: pointer;
+	}
+
 	.preset-name input {
 		min-width: 0;
 		flex: 1;
 		padding: 0.4rem 0.55rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.4rem;
 		font: inherit;
 	}
 

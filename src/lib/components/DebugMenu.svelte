@@ -78,7 +78,6 @@ function handleEndGame() {
 		background-color: rgba(0, 0, 0, 0.8);
 		color: white;
 		padding: 15px;
-		border-radius: 1em; /* Slightly more rounded corners */
 		z-index: 1000;
 		width: 280px; /* Define a width */
 		font-size: 0.9rem;

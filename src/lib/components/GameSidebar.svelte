@@ -76,7 +76,6 @@ let nextFruit = $derived(FRUITS[gameState?.nextFruitIndex] ?? null);
     justify-items: center;
     box-shadow: inset hsla(0, 0%, 0%, 0.2) 0 2px 2px;
     background-color: var(--color-background-dark);
-    border-radius: 2em;
     padding: 0.75em 1em;
     overflow: hidden;
   }
@@ -90,7 +89,6 @@ let nextFruit = $derived(FRUITS[gameState?.nextFruitIndex] ?? null);
     font-weight: 500;
     font-size: 1.5em;
     border: var(--color-border-light) 1px solid;
-    border-radius: 1em;
     padding: 0.25em 0.5em;
     max-width: 100%;
   }
