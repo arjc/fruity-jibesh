@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FRUITS, GAMEPLAY_TUNING } from '../../constants';
 import { Fruit } from '../../game/Fruit';
-import { getFruitDisplayName } from '../fruitCustomizations.svelte';
+import { fruitMergeSounds, getFruitDisplayName } from '../fruitCustomizations.svelte';
 import { GameState } from '../game.svelte.js';
 
 // Stub physics related methods before constructing GameState
@@ -64,10 +64,18 @@ afterEach(() => {
 });
 
 describe('GameState Methods', () => {
-	it('plays only one fruit-specific pop when several merges happen in one physics step', () => {
+	it('plays the resulting fruit sound for one merge when several happen in one physics step', () => {
 		const state = new GameState({});
-		const audioManager = { playSound: vi.fn() };
+		const audioManager = { playSound: vi.fn(), playCustomSound: vi.fn() };
 		state.audioManager = audioManager as any;
+		const inputSound = new Blob(['input'], { type: 'audio/mpeg' });
+		const resultSound = new Blob(['result'], { type: 'audio/mpeg' });
+		const inputFruitName = FRUITS[0].name;
+		const resultFruitName = FRUITS[1].name;
+		const previousInputSound = fruitMergeSounds[inputFruitName];
+		const previousResultSound = fruitMergeSounds[resultFruitName];
+		fruitMergeSounds[inputFruitName] = inputSound;
+		fruitMergeSounds[resultFruitName] = resultSound;
 
 		const makeFruit = (handle: number, fruitIndex: number) =>
 			Object.assign(Object.create(Fruit.prototype), {
@@ -91,11 +99,22 @@ describe('GameState Methods', () => {
 			}
 		} as any;
 
-		state.checkCollisions();
+		try {
+			state.checkCollisions();
 
-		expect(audioManager.playSound).toHaveBeenCalledTimes(1);
-		expect(audioManager.playSound).toHaveBeenCalledWith('pop', { volume: 1, rate: 1.2599 });
-		expect(state.mergeFruits).toHaveBeenCalledTimes(2);
+			expect(audioManager.playCustomSound).toHaveBeenCalledTimes(1);
+			expect(audioManager.playCustomSound).toHaveBeenCalledWith(resultFruitName, resultSound, {
+				volume: 1,
+				rate: 1.2599
+			});
+			expect(audioManager.playSound).not.toHaveBeenCalled();
+			expect(state.mergeFruits).toHaveBeenCalledTimes(2);
+		} finally {
+			if (previousInputSound) fruitMergeSounds[inputFruitName] = previousInputSound;
+			else delete fruitMergeSounds[inputFruitName];
+			if (previousResultSound) fruitMergeSounds[resultFruitName] = previousResultSound;
+			else delete fruitMergeSounds[resultFruitName];
+		}
 	});
 
 	it('merges two fruits of the same type', () => {
@@ -148,15 +167,35 @@ describe('GameState Methods', () => {
 	it('drops a fruit correctly', () => {
 		const state = new GameState({});
 		state.physicsWorld = {} as any;
+		const audioManager = { playSound: vi.fn(), playCustomSound: vi.fn() };
+		state.audioManager = audioManager as any;
+		const droppedFruitName = FRUITS[1].name;
+		const droppedFruitSound = new Blob(['drop'], { type: 'audio/mpeg' });
+		const previousSound = fruitMergeSounds[droppedFruitName];
+		fruitMergeSounds[droppedFruitName] = droppedFruitSound;
 		state.setStatus('playing');
 		state.nextFruitIndex = 2;
 
-		state.dropFruit(1, 100, 100);
+		try {
+			state.dropFruit(1, 100, 100);
 
-		expect(state.fruits.length).toBe(1);
-		expect(state.fruits[0].fruitIndex).toBe(1);
-		expect(state.dropCount).toBe(1);
-		expect(state.currentFruitIndex).toBe(2);
+			expect(state.fruits.length).toBe(1);
+			expect(state.fruits[0].fruitIndex).toBe(1);
+			expect(state.dropCount).toBe(1);
+			expect(state.currentFruitIndex).toBe(2);
+			expect(audioManager.playCustomSound).toHaveBeenCalledWith(
+				droppedFruitName,
+				droppedFruitSound,
+				{
+					volume: 1,
+					rate: 1.1225
+				}
+			);
+			expect(audioManager.playSound).not.toHaveBeenCalled();
+		} finally {
+			if (previousSound) fruitMergeSounds[droppedFruitName] = previousSound;
+			else delete fruitMergeSounds[droppedFruitName];
+		}
 	});
 
 	it('alternates strong impulses and spin across active fruits when shaken', () => {

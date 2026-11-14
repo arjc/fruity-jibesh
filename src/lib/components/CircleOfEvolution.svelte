@@ -7,7 +7,8 @@ import {
 	getFruitDisplayName,
 	resetFruitMergeSound,
 	setFruitDisplayName,
-	setFruitMergeSound
+	setFruitMergeSound,
+	trackPendingFruitMergeSoundSave
 } from '../stores/fruitCustomizations.svelte';
 import { fruitImageOverrides, setFruitImageOverride } from '../stores/fruitImageOverrides.svelte';
 import { encodeAudioAsMp3, encodePcmAsMp3 } from '../utils/encodeAudioAsMp3';
@@ -74,14 +75,14 @@ function handleImageChange(event: Event): void {
 
 	const fruitName = editingFruit.name;
 	const reader = new FileReader();
-	reader.onload = () => {
+	reader.onload = async () => {
 		if (typeof reader.result !== 'string') {
 			editorError = 'Could not read this image. Please try another file.';
 			return;
 		}
 
 		try {
-			setFruitImageOverride(fruitName, reader.result);
+			await setFruitImageOverride(fruitName, reader.result);
 			editorStatus = 'Image updated.';
 		} catch (error) {
 			console.error(`Failed to save custom image for ${fruitName}:`, error);
@@ -132,7 +133,7 @@ async function saveMp3MergeSound(fruitName: string, sound: Blob): Promise<void> 
 	}
 	await setFruitMergeSound(fruitName, sound);
 	editorError = '';
-	editorStatus = 'MP3 merge sound saved.';
+	editorStatus = 'Audio saved.';
 }
 
 function showAudioSaveError(fruitName: string, error: unknown): void {
@@ -182,7 +183,9 @@ async function handleAudioChange(event: Event): Promise<void> {
 		return;
 	}
 
-	await persistMergeSound(editingFruit.name, file);
+	const save = persistMergeSound(editingFruit.name, file);
+	trackPendingFruitMergeSoundSave(save);
+	await save;
 	input.value = '';
 }
 
@@ -277,7 +280,9 @@ function stopRecording(): void {
 		editorStatus = 'No audio was recorded.';
 		return;
 	}
-	void persistRecordedMergeSound(fruitName, chunks, sampleCount, sampleRate);
+	trackPendingFruitMergeSoundSave(
+		persistRecordedMergeSound(fruitName, chunks, sampleCount, sampleRate)
+	);
 }
 
 async function removeMergeSound(): Promise<void> {
@@ -286,7 +291,7 @@ async function removeMergeSound(): Promise<void> {
 	editorError = '';
 	try {
 		await resetFruitMergeSound(editingFruit.name);
-		editorStatus = 'Custom merge sound removed.';
+		editorStatus = 'Audio removed.';
 	} catch (error) {
 		console.error(`Failed to remove custom merge sound for ${editingFruit.name}:`, error);
 		editorError = 'Could not remove this sound.';
@@ -377,13 +382,13 @@ onDestroy(() => {
 			/>
 
 			<div class="sound-row">
-				<span class="sound-label">Merge sound:</span>
-				<label class="icon-button" title="Add sound file">
+				<span class="sound-label">Audio</span>
+				<label class="icon-button" title="Add audio file">
 					<span aria-hidden="true">+</span>
 					<input
 						type="file"
 						accept="audio/*"
-						aria-label={`Add merge sound for ${editingFruit.name}`}
+						aria-label={`Add audio for ${editingFruit.name}`}
 						onchange={handleAudioChange}
 					/>
 				</label>
@@ -410,8 +415,8 @@ onDestroy(() => {
 					<button
 						type="button"
 						class="remove-sound icon-button"
-						aria-label="Remove custom merge sound"
-						title="Remove custom merge sound"
+						aria-label="Remove custom audio"
+						title="Remove custom audio"
 						onclick={removeMergeSound}
 					>
 						&times;

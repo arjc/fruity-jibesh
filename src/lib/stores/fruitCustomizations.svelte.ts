@@ -29,6 +29,21 @@ function loadFruitDisplayNames(): Record<string, string> {
 export const fruitDisplayNames = $state<Record<string, string>>(loadFruitDisplayNames());
 export const fruitMergeSounds = $state<Record<string, Blob>>({});
 const modifiedFruitMergeSounds = new Set<string>();
+const pendingFruitMergeSoundSaves = new Set<Promise<void>>();
+
+export function trackPendingFruitMergeSoundSave(save: Promise<void>): void {
+	pendingFruitMergeSoundSaves.add(save);
+	void save.then(
+		() => pendingFruitMergeSoundSaves.delete(save),
+		() => pendingFruitMergeSoundSaves.delete(save)
+	);
+}
+
+export async function waitForPendingFruitMergeSoundSaves(): Promise<void> {
+	while (pendingFruitMergeSoundSaves.size > 0) {
+		await Promise.all(pendingFruitMergeSoundSaves);
+	}
+}
 
 export function getFruitDisplayName(fruitName: string): string {
 	return (

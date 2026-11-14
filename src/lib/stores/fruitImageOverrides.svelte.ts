@@ -1,10 +1,16 @@
-const STORAGE_KEY = 'subak-fruit-image-overrides';
+import {
+	deleteFruitImageOverride as deleteStoredFruitImageOverride,
+	getFruitImageOverrides,
+	saveFruitImageOverride as saveStoredFruitImageOverride
+} from './db';
 
-function loadFruitImageOverrides(): Record<string, string> {
+const LEGACY_STORAGE_KEY = 'subak-fruit-image-overrides';
+
+function loadLegacyFruitImageOverrides(): Record<string, string> {
 	if (typeof localStorage === 'undefined') return {};
 
 	try {
-		const storedOverrides: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+		const storedOverrides: unknown = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY) ?? '{}');
 		if (!storedOverrides || typeof storedOverrides !== 'object' || Array.isArray(storedOverrides)) {
 			return {};
 		}
@@ -15,22 +21,51 @@ function loadFruitImageOverrides(): Record<string, string> {
 			)
 		);
 	} catch (error) {
-		console.error('Failed to load custom fruit images:', error);
+		console.error('Failed to load legacy custom fruit images:', error);
 		return {};
 	}
 }
 
-export const fruitImageOverrides = $state<Record<string, string>>(loadFruitImageOverrides());
+export const fruitImageOverrides = $state<Record<string, string>>(loadLegacyFruitImageOverrides());
+let initializePromise: Promise<void> | null = null;
 
-export function setFruitImageOverride(fruitName: string, imageUrl: string): void {
-	const nextOverrides = { ...fruitImageOverrides, [fruitName]: imageUrl };
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(nextOverrides));
+export function initializeFruitImageOverrides(): Promise<void> {
+	if (!initializePromise) {
+		initializePromise = (async () => {
+			const storedOverrides = await getFruitImageOverrides();
+			const legacyOverrides = { ...fruitImageOverrides };
+
+			for (const [fruitName, imageUrl] of Object.entries(legacyOverrides)) {
+				if (storedOverrides[fruitName] === undefined) {
+					await saveStoredFruitImageOverride(fruitName, imageUrl);
+				}
+			}
+
+			for (const fruitName of Object.keys(fruitImageOverrides)) {
+				delete fruitImageOverrides[fruitName];
+			}
+			Object.assign(fruitImageOverrides, legacyOverrides, storedOverrides);
+
+			if (typeof localStorage !== 'undefined') {
+				localStorage.removeItem(LEGACY_STORAGE_KEY);
+			}
+		})().catch((error: unknown) => {
+			initializePromise = null;
+			throw error;
+		});
+	}
+
+	return initializePromise;
+}
+
+export async function setFruitImageOverride(fruitName: string, imageUrl: string): Promise<void> {
+	await initializeFruitImageOverrides();
+	await saveStoredFruitImageOverride(fruitName, imageUrl);
 	fruitImageOverrides[fruitName] = imageUrl;
 }
 
-export function resetFruitImageOverride(fruitName: string): void {
-	const nextOverrides = { ...fruitImageOverrides };
-	delete nextOverrides[fruitName];
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(nextOverrides));
+export async function resetFruitImageOverride(fruitName: string): Promise<void> {
+	await initializeFruitImageOverrides();
+	await deleteStoredFruitImageOverride(fruitName);
 	delete fruitImageOverrides[fruitName];
 }

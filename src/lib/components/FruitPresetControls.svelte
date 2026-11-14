@@ -2,7 +2,8 @@
 import {
 	fruitDisplayNames,
 	fruitMergeSounds,
-	getFruitDisplayName
+	getFruitDisplayName,
+	waitForPendingFruitMergeSoundSaves
 } from '../stores/fruitCustomizations.svelte';
 import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 import {
@@ -72,6 +73,7 @@ async function exportPreset(): Promise<void> {
 	presetBusy = true;
 	let objectUrl: string | null = null;
 	try {
+		await waitForPendingFruitMergeSoundSaves();
 		const file = await exportFruitPresetFile({
 			name: `${getFruitDisplayName('watermelon')} preset`,
 			names: { ...fruitDisplayNames },

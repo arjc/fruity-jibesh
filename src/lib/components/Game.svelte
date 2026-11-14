@@ -114,9 +114,9 @@ let borderLightColor = 'hsla(0, 0%, 0%, 0.075)';
 // Pre-rendered restricted-area band; rebuilt only on resize, blitted every frame.
 let restrictedAreaCanvas: HTMLCanvasElement | null = null;
 
-function refreshMenuPresets(): void {
+async function refreshMenuPresets(): Promise<void> {
 	try {
-		menuPresets = listRecentFruitPresets(4);
+		menuPresets = await listRecentFruitPresets(4);
 	} catch (error) {
 		console.error('Failed to load main-menu presets:', error);
 		menuError = 'Saved presets could not be loaded.';
@@ -150,7 +150,7 @@ async function handleMenuPresetFileChange(event: Event): Promise<void> {
 	menuBusy = true;
 	try {
 		selectedPresetName = await importFruitPresetFile(file);
-		refreshMenuPresets();
+		await refreshMenuPresets();
 	} catch (error) {
 		console.error('Failed to import a main-menu preset:', error);
 		menuError = error instanceof Error ? error.message : 'Could not import this preset.';
@@ -334,7 +334,7 @@ onMount(() => {
 		window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 	showDebugMenu = isDebugQuery && isLocalhost;
 
-	refreshMenuPresets();
+	void refreshMenuPresets();
 	const tipTimer = window.setInterval(() => {
 		if (gameState.status === 'uninitialized') {
 			tipIndex = (tipIndex + 1) % menuTips.length;
@@ -1069,7 +1069,7 @@ function handleShakeButton(): void {
 
     .menu-error {
       color: #9b1c31;
-      font-weight: 600;
+       font-weight: 600;
     }
 
     @media (max-width: 360px) {

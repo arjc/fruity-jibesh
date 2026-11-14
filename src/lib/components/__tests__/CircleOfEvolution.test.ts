@@ -21,7 +21,7 @@ vi.mock('../../utils/encodeAudioAsMp3', () => ({
 
 afterEach(async () => {
 	cleanup();
-	resetFruitImageOverride('apple');
+	await resetFruitImageOverride('apple');
 	resetFruitDisplayName('apple');
 	await resetFruitMergeSound('apple');
 });
@@ -34,8 +34,8 @@ describe('CircleOfEvolution', () => {
 		expect(renderedFruits.length).toBe(FRUITS.length);
 	});
 
-	it('opens an editor with name, image, and merge-sound controls for each fruit', async () => {
-		const { getByRole, getByLabelText } = render(CircleOfEvolution);
+	it('opens an editor with name, image, and audio controls for each fruit', async () => {
+		const { getByRole, getByLabelText, getByText } = render(CircleOfEvolution);
 
 		for (const fruit of FRUITS) {
 			const name = `${fruit.name[0].toUpperCase()}${fruit.name.slice(1)}`;
@@ -45,7 +45,8 @@ describe('CircleOfEvolution', () => {
 		await fireEvent.click(getByRole('button', { name: 'Edit Apple' }));
 		expect(getByLabelText('Fruit name')).not.toBeNull();
 		expect(getByLabelText('Customize apple image').getAttribute('type')).toBe('file');
-		expect(getByLabelText('Add merge sound for apple').getAttribute('type')).toBe('file');
+		expect(getByLabelText('Add audio for apple').getAttribute('type')).toBe('file');
+		expect(getByText('Audio')).not.toBeNull();
 		expect(getByRole('button', { name: 'Record sound' })).not.toBeNull();
 	});
 
@@ -68,7 +69,7 @@ describe('CircleOfEvolution', () => {
 		);
 	});
 
-	it('saves a custom fruit name and merge sound', async () => {
+	it('saves a custom fruit name and audio', async () => {
 		const { getByLabelText, getByRole } = render(CircleOfEvolution);
 		await fireEvent.click(getByRole('button', { name: 'Edit Apple' }));
 
@@ -79,7 +80,7 @@ describe('CircleOfEvolution', () => {
 
 		await fireEvent.click(getByRole('button', { name: 'Edit Ruby' }));
 		const soundFile = new File(['custom sound'], 'merge.wav', { type: 'audio/wav' });
-		await fireEvent.change(getByLabelText('Add merge sound for apple'), {
+		await fireEvent.change(getByLabelText('Add audio for apple'), {
 			target: { files: [soundFile] }
 		});
 

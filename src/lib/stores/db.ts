@@ -17,10 +17,22 @@ interface FruitPresetSoundRecord {
 	sounds: Record<string, Blob>;
 }
 
+interface FruitImageOverrideRecord {
+	fruitName: string;
+	imageUrl: string;
+}
+
+interface FruitPresetImageRecord {
+	presetId: string;
+	images: Record<string, string>;
+}
+
 const db = new Dexie('FruitMergerDB') as Dexie & {
 	scores: Table<ScoreRecord, number>;
 	fruitMergeSounds: Table<FruitMergeSoundRecord, string>;
 	fruitPresetSounds: Table<FruitPresetSoundRecord, string>;
+	fruitImageOverrides: Table<FruitImageOverrideRecord, string>;
+	fruitPresetImages: Table<FruitPresetImageRecord, string>;
 };
 
 db.version(1).stores({
@@ -47,6 +59,14 @@ db.version(5).stores({
 	fruitPresetSounds: 'presetId'
 });
 
+db.version(6).stores({
+	scores: '++id, score, date',
+	fruitMergeSounds: 'fruitName',
+	fruitPresetSounds: 'presetId',
+	fruitImageOverrides: 'fruitName',
+	fruitPresetImages: 'presetId'
+});
+
 export const getFruitMergeSounds = async (): Promise<Record<string, Blob>> => {
 	const records = await db.fruitMergeSounds.toArray();
 	return Object.fromEntries(records.map(({ fruitName, sound }) => [fruitName, sound]));
@@ -59,11 +79,52 @@ export const getFruitPresetSounds = async (
 	return record?.sounds;
 };
 
+export const getFruitPresetImages = async (
+	presetId: string
+): Promise<Record<string, string> | undefined> => {
+	const record = await db.fruitPresetImages.get(presetId);
+	return record?.images;
+};
+
+export const saveFruitPresetImages = async (
+	presetId: string,
+	images: Record<string, string>
+): Promise<void> => {
+	await db.fruitPresetImages.put({ presetId, images });
+};
+
+export const saveFruitPresetAssets = async (
+	presetId: string,
+	images: Record<string, string>,
+	sounds: Record<string, Blob>
+): Promise<void> => {
+	await db.transaction('rw', db.fruitPresetImages, db.fruitPresetSounds, async () => {
+		await db.fruitPresetImages.put({ presetId, images });
+		await db.fruitPresetSounds.put({ presetId, sounds });
+	});
+};
+
 export const saveFruitPresetSounds = async (
 	presetId: string,
 	sounds: Record<string, Blob>
 ): Promise<void> => {
 	await db.fruitPresetSounds.put({ presetId, sounds });
+};
+
+export const getFruitImageOverrides = async (): Promise<Record<string, string>> => {
+	const records = await db.fruitImageOverrides.toArray();
+	return Object.fromEntries(records.map(({ fruitName, imageUrl }) => [fruitName, imageUrl]));
+};
+
+export const saveFruitImageOverride = async (
+	fruitName: string,
+	imageUrl: string
+): Promise<void> => {
+	await db.fruitImageOverrides.put({ fruitName, imageUrl });
+};
+
+export const deleteFruitImageOverride = async (fruitName: string): Promise<void> => {
+	await db.fruitImageOverrides.delete(fruitName);
 };
 
 export const saveFruitMergeSound = async (fruitName: string, sound: Blob): Promise<void> => {

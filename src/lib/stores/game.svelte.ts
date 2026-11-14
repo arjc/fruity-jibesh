@@ -17,6 +17,7 @@ import {
 	getFruitDisplayName,
 	loadFruitMergeSounds
 } from './fruitCustomizations.svelte';
+import { initializeFruitImageOverrides } from './fruitImageOverrides.svelte';
 
 // --- Constants for Volume Mapping ---
 const MIN_VELOCITY_FOR_SOUND = 0.2; // Ignore very gentle taps
@@ -121,6 +122,11 @@ export class GameState {
 	async init() {
 		const { soundsPath } = this;
 		this.audioManager = new AudioManager({ soundsPath });
+		try {
+			await initializeFruitImageOverrides();
+		} catch (error) {
+			console.error('Failed to migrate custom fruit images:', error);
+		}
 		try {
 			await loadFruitMergeSounds();
 		} catch (error) {
@@ -315,14 +321,9 @@ export class GameState {
 		});
 
 		if (mergeSoundRate !== null) {
-			const mergeFruit = mergePairs[0]?.fruitA;
-			const mergeFruitName = mergeFruit ? FRUITS[mergeFruit.fruitIndex]?.name : undefined;
-			const customSound = mergeFruitName ? fruitMergeSounds[mergeFruitName] : undefined;
-			if (mergeFruitName && customSound) {
-				this.audioManager?.playCustomSound(mergeFruitName, customSound, {
-					volume: 1,
-					rate: mergeSoundRate
-				});
+			const mergePair = mergePairs[0];
+			if (mergePair) {
+				this.playFruitSound(mergePair.fruitA.fruitIndex + 1, mergeSoundRate);
 			} else {
 				this.audioManager?.playSound('pop', { volume: 1, rate: mergeSoundRate });
 			}
@@ -335,6 +336,16 @@ export class GameState {
 			mergePairs.forEach(({ fruitA, fruitB }) => {
 				this.mergeFruits(fruitA, fruitB);
 			});
+		}
+	}
+
+	private playFruitSound(fruitIndex: number, rate: number): void {
+		const fruitName = FRUITS[fruitIndex]?.name;
+		const customSound = fruitName ? fruitMergeSounds[fruitName] : undefined;
+		if (fruitName && customSound) {
+			this.audioManager?.playCustomSound(fruitName, customSound, { volume: 1, rate });
+		} else {
+			this.audioManager?.playSound('pop', { volume: 1, rate });
 		}
 	}
 
@@ -479,6 +490,7 @@ export class GameState {
 	}
 
 	dropFruit(fruitIndex: number, x: number, y: number): void {
+		this.playFruitSound(fruitIndex, DROP_PITCH_RATES[fruitIndex] ?? 1);
 		this.addFruit(fruitIndex, x, y);
 		this.currentFruitIndex = this.nextFruitIndex;
 		this.nextFruitIndex = this.getRandomFruitIndex();

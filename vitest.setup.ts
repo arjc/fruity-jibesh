@@ -15,6 +15,8 @@ vi.mock('svelte/motion', () => ({
 const mockScores: { id: number; score: number; date: Date }[] = [];
 const mockFruitMergeSounds = new Map<string, Blob>();
 const mockFruitPresetSounds = new Map<string, Record<string, Blob>>();
+const mockFruitImageOverrides = new Map<string, string>();
+const mockFruitPresetImages = new Map<string, Record<string, string>>();
 
 vi.mock('./src/lib/stores/db', () => ({
 	saveScore: vi.fn(async (score: number): Promise<void> => {
@@ -39,6 +41,34 @@ vi.mock('./src/lib/stores/db', () => ({
 	),
 	saveFruitPresetSounds: vi.fn(
 		async (presetId: string, sounds: Record<string, Blob>): Promise<void> => {
+			mockFruitPresetSounds.set(presetId, sounds);
+		}
+	),
+	getFruitImageOverrides: vi.fn(
+		async (): Promise<Record<string, string>> => Object.fromEntries(mockFruitImageOverrides)
+	),
+	saveFruitImageOverride: vi.fn(async (fruitName: string, imageUrl: string): Promise<void> => {
+		mockFruitImageOverrides.set(fruitName, imageUrl);
+	}),
+	deleteFruitImageOverride: vi.fn(async (fruitName: string): Promise<void> => {
+		mockFruitImageOverrides.delete(fruitName);
+	}),
+	getFruitPresetImages: vi.fn(
+		async (presetId: string): Promise<Record<string, string> | undefined> =>
+			mockFruitPresetImages.get(presetId)
+	),
+	saveFruitPresetImages: vi.fn(
+		async (presetId: string, images: Record<string, string>): Promise<void> => {
+			mockFruitPresetImages.set(presetId, images);
+		}
+	),
+	saveFruitPresetAssets: vi.fn(
+		async (
+			presetId: string,
+			images: Record<string, string>,
+			sounds: Record<string, Blob>
+		): Promise<void> => {
+			mockFruitPresetImages.set(presetId, images);
 			mockFruitPresetSounds.set(presetId, sounds);
 		}
 	),

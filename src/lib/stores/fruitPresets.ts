@@ -1,13 +1,22 @@
 import { FRUITS } from '../constants';
 import { isMp3 } from '../utils/mp3';
-import { getFruitPresetSounds, saveFruitPresetSounds } from './db';
+import {
+	getFruitPresetImages,
+	getFruitPresetSounds,
+	saveFruitPresetAssets,
+	saveFruitPresetImages
+} from './db';
 import {
 	resetFruitDisplayName,
 	resetFruitMergeSound,
 	setFruitDisplayName,
 	setFruitMergeSound
 } from './fruitCustomizations.svelte';
-import { resetFruitImageOverride, setFruitImageOverride } from './fruitImageOverrides.svelte';
+import {
+	initializeFruitImageOverrides,
+	resetFruitImageOverride,
+	setFruitImageOverride
+} from './fruitImageOverrides.svelte';
 
 const STORAGE_KEY = 'subak-fruit-presets';
 const FILE_FORMAT = 'arjcfruits';
@@ -32,7 +41,7 @@ export interface FruitPresetPreview {
 interface StoredFruitPreset {
 	name: string;
 	names: Record<string, string>;
-	images: Record<string, string>;
+	images?: Record<string, string>;
 	lastUsedAt?: number;
 }
 
@@ -149,9 +158,8 @@ function getStoredPresets(): StoredFruitPreset[] {
 			!!preset.names &&
 			typeof preset.names === 'object' &&
 			!Array.isArray(preset.names) &&
-			!!preset.images &&
-			typeof preset.images === 'object' &&
-			!Array.isArray(preset.images)
+			(!('images' in preset) ||
+				(!!preset.images && typeof preset.images === 'object' && !Array.isArray(preset.images)))
 	);
 }
 
@@ -165,11 +173,32 @@ export function listFruitPresets(): string[] {
 		.sort((a, b) => a.localeCompare(b));
 }
 
-export function listRecentFruitPresets(limit: number): FruitPresetPreview[] {
-	return getStoredPresets()
+export async function listRecentFruitPresets(limit: number): Promise<FruitPresetPreview[]> {
+	const recentPresets = getStoredPresets()
 		.sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.name.localeCompare(b.name))
-		.slice(0, limit)
-		.map(({ name, images }) => ({ name, images }));
+		.slice(0, limit);
+
+	return Promise.all(
+		recentPresets.map(async ({ name, images }) => ({
+			name,
+			images: (await getFruitPresetImages(getPresetId(name))) ?? images ?? {}
+		}))
+	);
+}
+
+async function migrateLegacyPresetImages(
+	presets: StoredFruitPreset[]
+): Promise<StoredFruitPreset[]> {
+	const legacyPresets = presets.filter((preset) => preset.images !== undefined);
+	if (legacyPresets.length === 0) return presets;
+
+	for (const preset of legacyPresets) {
+		await saveFruitPresetImages(getPresetId(preset.name), validateImages(preset.images));
+	}
+
+	const migratedPresets = presets.map(({ images: _images, ...preset }) => preset);
+	localStorage.setItem(STORAGE_KEY, JSON.stringify(migratedPresets));
+	return migratedPresets;
 }
 
 export async function saveFruitPreset(preset: FruitPreset): Promise<void> {
@@ -179,14 +208,15 @@ export async function saveFruitPreset(preset: FruitPreset): Promise<void> {
 		throw new Error('Choose a name other than “Default”.');
 	}
 
+	await initializeFruitImageOverrides();
+	const presets = await migrateLegacyPresetImages(getStoredPresets());
 	const previousValue = localStorage.getItem(STORAGE_KEY);
-	const presets = getStoredPresets();
 	const nextPresets = presets.filter((saved) => getPresetId(saved.name) !== presetId);
-	nextPresets.push({ name, names: preset.names, images: preset.images, lastUsedAt: Date.now() });
+	nextPresets.push({ name, names: preset.names, lastUsedAt: Date.now() });
 
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPresets));
 	try {
-		await saveFruitPresetSounds(presetId, preset.sounds);
+		await saveFruitPresetAssets(presetId, preset.images, preset.sounds);
 	} catch (error) {
 		if (previousValue === null) localStorage.removeItem(STORAGE_KEY);
 		else localStorage.setItem(STORAGE_KEY, previousValue);
@@ -201,11 +231,13 @@ export async function getFruitPreset(name: string): Promise<FruitPreset | undefi
 
 	return {
 		...preset,
+		images: (await getFruitPresetImages(presetId)) ?? preset.images ?? {},
 		sounds: (await getFruitPresetSounds(presetId)) ?? {}
 	};
 }
 
 export async function applyFruitPreset(name: string): Promise<void> {
+	await initializeFruitImageOverrides();
 	const preset = name === 'Default' ? undefined : await getFruitPreset(name);
 	if (name !== 'Default' && !preset) {
 		throw new Error('This preset could not be found.');
@@ -213,7 +245,7 @@ export async function applyFruitPreset(name: string): Promise<void> {
 
 	for (const fruit of FRUITS) {
 		resetFruitDisplayName(fruit.name);
-		resetFruitImageOverride(fruit.name);
+		await resetFruitImageOverride(fruit.name);
 		await resetFruitMergeSound(fruit.name);
 	}
 
@@ -222,7 +254,7 @@ export async function applyFruitPreset(name: string): Promise<void> {
 			setFruitDisplayName(fruitName, displayName);
 		}
 		for (const [fruitName, imageUrl] of Object.entries(preset.images)) {
-			setFruitImageOverride(fruitName, imageUrl);
+			await setFruitImageOverride(fruitName, imageUrl);
 		}
 		for (const [fruitName, sound] of Object.entries(preset.sounds)) {
 			await setFruitMergeSound(fruitName, sound);
