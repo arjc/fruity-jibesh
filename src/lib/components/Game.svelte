@@ -32,6 +32,7 @@ import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 import {
 	applyFruitPreset,
 	type FruitPresetPreview,
+	importFruitPresetData,
 	importFruitPresetFile,
 	listRecentFruitPresets
 } from '../stores/fruitPresets';
@@ -92,7 +93,9 @@ let selectedPresetName = $state('Default');
 let menuError = $state('');
 let menuBusy = $state(false);
 let gameReady = $state(false);
+let htmlPresetPending = $state(false);
 let tipIndex = $state(0);
+let htmlPresetTransferCleanup: (() => void) | undefined;
 const MOTION_SHAKE_THRESHOLD = 15;
 const GRAVITY_SHAKE_THRESHOLD = 12;
 const MOTION_SHAKE_COOLDOWN_MS = 1000;
@@ -158,6 +161,112 @@ async function handleMenuPresetFileChange(event: Event): Promise<void> {
 		input.value = '';
 		menuBusy = false;
 	}
+}
+
+interface HtmlPresetTransferMessage {
+	type: 'fruity-jibesh-preset-data';
+	token: string;
+	fileName: string;
+	payload: ArrayBuffer;
+}
+
+function isHtmlPresetTransferMessage(value: unknown): value is HtmlPresetTransferMessage {
+	if (!value || typeof value !== 'object') return false;
+	const data = value as Record<string, unknown>;
+	return (
+		data.type === 'fruity-jibesh-preset-data' &&
+		typeof data.token === 'string' &&
+		typeof data.fileName === 'string' &&
+		data.payload instanceof ArrayBuffer
+	);
+}
+
+function getHtmlPresetTransferToken(): string | null {
+	const token = new URLSearchParams(window.location.hash.slice(1)).get('fruity-preset');
+	if (!token || !/^[\da-f]{32}$/i.test(token)) return null;
+	window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+	return token;
+}
+
+function getImportedHtmlPresetName(fileName: string): string {
+	const baseName = fileName
+		.split(/[\\/]/)
+		.pop()
+		?.replace(/\.html?$/i, '')
+		.replace(/[<>:"|?*\p{Cc}]/gu, '-')
+		.trim()
+		.slice(0, 64);
+	return baseName || 'preset';
+}
+
+async function applyHtmlPresetTransfer(
+	message: HtmlPresetTransferMessage,
+	opener: Window,
+	token: string
+): Promise<void> {
+	menuBusy = true;
+	try {
+		const name = await importFruitPresetData(
+			message.payload,
+			getImportedHtmlPresetName(message.fileName)
+		);
+		selectedPresetName = name;
+		await refreshMenuPresets();
+		await applyFruitPreset(name);
+		gameState.setStatus('playing');
+		opener.postMessage({ type: 'fruity-jibesh-preset-complete', token, success: true, name }, '*');
+	} catch (error) {
+		console.error('Failed to import a shared HTML preset:', error);
+		const messageText = error instanceof Error ? error.message : 'Could not import this preset.';
+		menuError = messageText;
+		opener.postMessage(
+			{ type: 'fruity-jibesh-preset-complete', token, success: false, error: messageText },
+			'*'
+		);
+	} finally {
+		menuBusy = false;
+		htmlPresetPending = false;
+	}
+}
+
+function receiveHtmlPresetTransfer(token: string): void {
+	const opener = window.opener;
+	if (!opener) {
+		htmlPresetPending = false;
+		menuError = 'Open this page from the downloaded Fruity Jibesh HTML file to import its preset.';
+		return;
+	}
+
+	let timeoutId = 0;
+	const handleMessage = (event: MessageEvent<unknown>) => {
+		if (
+			event.source !== opener ||
+			event.origin !== 'null' ||
+			!isHtmlPresetTransferMessage(event.data) ||
+			event.data.token !== token
+		) {
+			return;
+		}
+
+		window.removeEventListener('message', handleMessage);
+		window.clearTimeout(timeoutId);
+		htmlPresetTransferCleanup = undefined;
+		void applyHtmlPresetTransfer(event.data, opener, token);
+	};
+
+	window.addEventListener('message', handleMessage);
+	timeoutId = window.setTimeout(() => {
+		window.removeEventListener('message', handleMessage);
+		htmlPresetTransferCleanup = undefined;
+		htmlPresetPending = false;
+		menuError = 'The HTML file did not send the preset. Keep it open and try again.';
+	}, 60000);
+	htmlPresetTransferCleanup = () => {
+		window.clearTimeout(timeoutId);
+		window.removeEventListener('message', handleMessage);
+		htmlPresetTransferCleanup = undefined;
+	};
+	opener.postMessage({ type: 'fruity-jibesh-preset-ready', token }, '*');
 }
 
 // Device pixel ratio, capped at 2 to bound offscreen sprite memory.
@@ -328,6 +437,8 @@ function renderCanvas() {
 }
 
 onMount(() => {
+	const presetTransferToken = getHtmlPresetTransferToken();
+	htmlPresetPending = presetTransferToken !== null;
 	const urlParams = new URLSearchParams(window.location.search);
 	const isDebugQuery = urlParams.get('debug') === 'true';
 	const isLocalhost =
@@ -346,10 +457,23 @@ onMount(() => {
 		.init()
 		.then(() => {
 			gameReady = true;
+			if (presetTransferToken) receiveHtmlPresetTransfer(presetTransferToken);
 		})
 		.catch((error: unknown) => {
 			console.error('Failed to initialize the game:', error);
 			menuError = 'The game could not be initialized. Please reload and try again.';
+			htmlPresetPending = false;
+			if (presetTransferToken && window.opener) {
+				window.opener.postMessage(
+					{
+						type: 'fruity-jibesh-preset-complete',
+						token: presetTransferToken,
+						success: false,
+						error: menuError
+					},
+					'*'
+				);
+			}
 		});
 
 	if (gameRef) {
@@ -467,6 +591,7 @@ onMount(() => {
 
 	return function onUnmount() {
 		window.clearInterval(tipTimer);
+		htmlPresetTransferCleanup?.();
 		window.removeEventListener('beforeunload', handleBeforeUnload);
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
 		window.removeEventListener('devicemotion', handleDeviceMotion);
@@ -682,11 +807,19 @@ function handleShakeButton(): void {
     tabindex="0"
   >
     {#if gameState.status === 'uninitialized'}
-      <section class="start-screen" aria-labelledby="game-title">
-        <h1 id="game-title">Fruity Jibesh</h1>
-        <p class="menu-subtitle">Choose your fruit preset</p>
+      {#if htmlPresetPending}
+        <section class="start-screen" aria-labelledby="game-title">
+          <h1 id="game-title">Fruity Jibesh</h1>
+          <p class="menu-subtitle" role="status">
+            {gameReady ? 'Waiting for the shared preset…' : 'Loading the shared preset…'}
+          </p>
+        </section>
+      {:else}
+        <section class="start-screen" aria-labelledby="game-title">
+          <h1 id="game-title">Fruity Jibesh</h1>
+          <p class="menu-subtitle">Choose your fruit preset</p>
 
-        <div class="preset-grid" aria-label="Choose a preset">
+          <div class="preset-grid" aria-label="Choose a preset">
           <button
             type="button"
             class="menu-preset-card"
@@ -732,30 +865,31 @@ function handleShakeButton(): void {
             <span class="import-plus" aria-hidden="true">+</span>
             <span class="preset-card-name">Import from file</span>
           </label>
-        </div>
+          </div>
 
-        <button
-          class="start-game-button"
-          disabled={!gameReady || menuBusy}
-          onclick={() => void startSelectedPreset()}
-        >
-          {menuBusy ? 'Loading preset…' : gameReady ? 'Start Game' : 'Loading game…'}
-        </button>
+          <button
+            class="start-game-button"
+            disabled={!gameReady || menuBusy}
+            onclick={() => void startSelectedPreset()}
+          >
+            {menuBusy ? 'Loading preset…' : gameReady ? 'Start Game' : 'Loading game…'}
+          </button>
 
-        <section class="how-to-play" aria-labelledby="how-to-play-title">
-          <h2 id="how-to-play-title">How to play</h2>
-          <ol>
-            <li>Drop fruit into the container.</li>
-            <li>Match two fruits to merge them into the next fruit.</li>
-            <li>Keep fruit below the top line or the game ends.</li>
-          </ol>
+          <section class="how-to-play" aria-labelledby="how-to-play-title">
+            <h2 id="how-to-play-title">How to play</h2>
+            <ol>
+              <li>Drop fruit into the container.</li>
+              <li>Match two fruits to merge them into the next fruit.</li>
+              <li>Keep fruit below the top line or the game ends.</li>
+            </ol>
+          </section>
+
+          <p class="menu-tip" role="status">Tip: {menuTips[tipIndex]}</p>
+          {#if menuError}
+            <p class="menu-error" role="alert">{menuError}</p>
+          {/if}
         </section>
-
-        <p class="menu-tip" role="status">Tip: {menuTips[tipIndex]}</p>
-        {#if menuError}
-          <p class="menu-error" role="alert">{menuError}</p>
-        {/if}
-      </section>
+      {/if}
     {:else}
       <div class="header"><GameHeader {gameState} onShake={handleShakeButton} /></div>
       <div class="sidebar"><GameSidebar {gameState} /></div>

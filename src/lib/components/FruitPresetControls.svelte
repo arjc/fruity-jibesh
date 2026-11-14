@@ -74,13 +74,21 @@ async function exportPreset(): Promise<void> {
 	let objectUrl: string | null = null;
 	try {
 		await waitForPendingFruitMergeSoundSaves();
+		const presetName = `${getFruitDisplayName('watermelon')} preset`;
 		const file = await exportFruitPresetFile({
-			name: `${getFruitDisplayName('watermelon')} preset`,
+			name: presetName,
 			names: { ...fruitDisplayNames },
 			images: { ...fruitImageOverrides },
 			sounds: { ...fruitMergeSounds }
 		});
-		const fileName = 'preset.png';
+		const safeName = presetName
+			.replace(/[<>:"|?*]/g, '-')
+			.split('/')
+			.join('-')
+			.split('\\')
+			.join('-')
+			.trim();
+		const fileName = `${safeName || 'preset'}.html`;
 		objectUrl = URL.createObjectURL(file);
 		const link = document.createElement('a');
 		link.href = objectUrl;

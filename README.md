@@ -8,7 +8,7 @@
 
 A browser-based fruit-merging puzzle game inspired by [Suika Game](https://www.nintendo.com/us/store/products/suika-game-switch/). Drop fruits into a container — when two identical fruits touch, they merge into the next fruit in the evolution chain. Combine your way up through **11 fruits** (blueberry → grape → lemon → orange → apple → dragonfruit → pear → peach → pineapple → honeydew → watermelon) and chase the highest score.
 
-This repository is a feature-enhanced fork of [Subak Game](https://github.com/Fauntleroy/subak-game). It builds on Subak's fruit-merging gameplay with fruit and preset customization, local save/load, and shareable preset files.
+This repository is a feature-enhanced fork of [Subak Game](https://github.com/Fauntleroy/subak-game). It builds on Subak's fruit-merging gameplay with fruit and preset customization, local save/load, and shareable HTML preset launchers.
 
 The original game, "Merge Big Watermelon" (合成大西瓜), was created by Meadow Science (米兜科技). This project was built as a fun memento of a team off-site where I accidentally got my entire team hooked on Suika Game. It was originally called "Subak" (수박), Korean for watermelon.
 
@@ -29,13 +29,15 @@ The original game, "Merge Big Watermelon" (合成大西瓜), was created by Mead
 - **Game over** when any fruit breaches the danger line at the top.
 - **Customize fruits** — change fruit names, images, and audio; audio can be uploaded or recorded as MP3.
 - **Save and load presets** — keep named presets in this browser, including their fruit names, images, and audio.
-- **Share presets** — export a PNG image with the preset data embedded, or import one shared by another player.
+- **Share presets** — export a self-contained HTML launcher to share as a document; it transfers the preset locally into the game without uploading it.
 - **Preset start screen** — choose a recent preset, browse quick tips, and review the game instructions before starting.
 - **Offline Support** — no backend or analytics requests; game pages and assets (including physics WASM and audio) are cached via a service worker.
 - **Local high scores** — scores are saved on your device with IndexedDB.
 - **Installable PWA** — can be installed as a standalone application on mobile and desktop devices.
 
-Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. Exported PNG images display import instructions and bundle preset names, fruit custom names, images, and MP3 audio for sharing. Previously exported PDF and `.arjcfruits` files can still be imported.
+Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. Exported HTML launchers bundle preset names, fruit custom names, images, and MP3 audio. The launcher opens the site and sends the data between browser windows with `postMessage`; preset data is not included in the URL or uploaded. Previously exported PNG, PDF, and `.arjcfruits` files can still be imported.
+
+To share through WhatsApp, send the exported `.html` file as a **document**, not as an image. The recipient should download it, open it in a browser (rather than WhatsApp's preview), and tap **Open preset in Fruity Jibesh**. The site saves the preset on that device and starts the game with it.
 
 ---
 

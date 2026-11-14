@@ -24,9 +24,15 @@ const FILE_VERSION = 1;
 const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_SOUND_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_PRESET_FILE_SIZE_BYTES = 110 * 1024 * 1024;
+const MAX_PRESET_IMAGE_FILE_SIZE_BYTES = MAX_PRESET_FILE_SIZE_BYTES + 1024 * 1024;
 const PDF_ATTACHMENT_SUBTYPE = '/Subtype /application#2Fvnd.arjcfruits+json';
+const PNG_INSTRUCTION_WIDTH = 1200;
+const PNG_INSTRUCTION_HEIGHT = 630;
+const PNG_MAX_DIMENSION = 16384;
+const PNG_MAX_PIXEL_COUNT = 60_000_000;
 const PNG_SIGNATURE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
-const PNG_PRESET_CHUNK_TYPE = encodeText('frPs');
+const PIXEL_PRESET_MAGIC = encodeText('FJPR');
+const PIXEL_PRESET_HEADER_SIZE = 12;
 const FRUIT_NAMES = new Set(FRUITS.map(({ name }) => name));
 const CRC32_TABLE = (() => {
 	const table = new Uint32Array(256);
@@ -114,105 +120,207 @@ function findBytes(data: Uint8Array, pattern: Uint8Array, start = 0): number {
 	return -1;
 }
 
-function findPngChunk(
-	bytes: Uint8Array,
-	chunkType: string
-): { offset: number; length: number } | undefined {
+function readRgbPixelBytes(pixels: Uint8ClampedArray, offset: number, length: number): Uint8Array {
+	const bytes = new Uint8Array(length);
+	let targetOffset = 0;
+	let pixelOffset = (offset / 3) * 4;
+	while (targetOffset + 2 < length) {
+		bytes[targetOffset] = pixels[pixelOffset];
+		bytes[targetOffset + 1] = pixels[pixelOffset + 1];
+		bytes[targetOffset + 2] = pixels[pixelOffset + 2];
+		targetOffset += 3;
+		pixelOffset += 4;
+	}
+	for (let channel = 0; targetOffset < length; channel++) {
+		bytes[targetOffset++] = pixels[pixelOffset + channel];
+	}
+	return bytes;
+}
+
+async function getPngDimensions(file: File): Promise<{ width: number; height: number }> {
+	const header = new Uint8Array(await file.slice(0, 24).arrayBuffer());
+	const headerView = new DataView(header.buffer);
+	const chunkType = new TextDecoder().decode(header.subarray(12, 16));
 	if (
-		bytes.length < PNG_SIGNATURE.length ||
-		!PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)
+		header.length !== 24 ||
+		!PNG_SIGNATURE.every((byte, index) => header[index] === byte) ||
+		headerView.getUint32(8, false) !== 13 ||
+		chunkType !== 'IHDR'
 	) {
 		throw new Error('This is not a valid PNG image.');
 	}
 
-	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	let offset = PNG_SIGNATURE.length;
-	while (offset + 12 <= bytes.length) {
-		const length = view.getUint32(offset, false);
-		const end = offset + length + 12;
-		if (end > bytes.length) throw new Error('The PNG image contains a malformed chunk.');
-
-		const type = new TextDecoder().decode(bytes.subarray(offset + 4, offset + 8));
-		if (type === chunkType) return { offset, length };
-		if (type === 'IEND') return undefined;
-		offset = end;
+	const width = headerView.getUint32(16, false);
+	const height = headerView.getUint32(20, false);
+	if (
+		width < PNG_INSTRUCTION_WIDTH ||
+		width > PNG_MAX_DIMENSION ||
+		height <= PNG_INSTRUCTION_HEIGHT ||
+		height > PNG_MAX_DIMENSION ||
+		width * height > PNG_MAX_PIXEL_COUNT
+	) {
+		throw new Error('This PNG has invalid preset image dimensions.');
 	}
-	throw new Error('The PNG image is incomplete.');
+	return { width, height };
 }
 
-async function createPresetPng(payload: Uint8Array): Promise<Blob> {
-	const canvas = document.createElement('canvas');
-	canvas.width = 1200;
-	canvas.height = 630;
-	const context = canvas.getContext('2d');
-	if (!context) throw new Error('Could not create the preset image.');
+function createPresetHtml(serializedPreset: string): Blob {
+	const safePresetJson = serializedPreset.replace(/</g, '\\u003c');
+	const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Fruity Jibesh preset</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f8fafc;color:#172554;font:16px Arial,sans-serif}
+main{max-width:38rem;padding:2rem;border:1px solid #cbd5e1;background:white}
+h1{margin-top:0}
+button{padding:.8rem 1rem;border:0;background:#1d4ed8;color:white;font:inherit;cursor:pointer}
+#status{min-height:1.5em}
+</style>
+</head>
+<body>
+<main>
+<h1>Fruity Jibesh preset</h1>
+<p>This file contains a preset and its custom images, names, and audio.</p>
+<p>Tap below to open Fruity Jibesh and transfer the preset directly in your browser. The preset is not uploaded.</p>
+<button id="open" type="button">Open preset in Fruity Jibesh</button>
+<p id="status" role="status">Open this downloaded file in a browser, then tap the button.</p>
+</main>
+<script id="preset-data" type="application/json">${safePresetJson}</script>
+<script>
+(() => {
+  const targetOrigin = 'https://fruity-jibesh-vv4i.vercel.app';
+  const presetJson = document.getElementById('preset-data').textContent;
+  const status = document.getElementById('status');
+  const button = document.getElementById('open');
+  let targetWindow = null;
+  let transferToken = '';
+  let timeoutId = 0;
 
-	context.fillStyle = '#f8fafc';
-	context.fillRect(0, 0, canvas.width, canvas.height);
-	context.fillStyle = '#dbeafe';
-	context.fillRect(0, 0, canvas.width, 16);
-	context.fillStyle = '#172554';
-	context.font = 'bold 52px Arial, sans-serif';
-	context.fillText('Fruity Jibesh preset', 72, 132);
-	context.fillStyle = '#334155';
-	context.font = '30px Arial, sans-serif';
-	context.fillText('Save this file and goto', 72, 236);
-	context.fillStyle = '#1d4ed8';
-	context.fillText('https://fruity-jibesh-vv4i.vercel.app/', 72, 292);
-	context.fillStyle = '#334155';
-	context.fillText('Choose "+ import from file" and import this PNG image there...', 72, 394);
+  function getFileName(fallbackName) {
+    let fileName = '';
+    try {
+      fileName = decodeURIComponent(location.pathname.split('/').pop() || '');
+    } catch {}
+    fileName = fileName.replace(/\\.html?$/i, '').replace(/[<>:"|?*]/g, '-').split('/').join('-').split(String.fromCharCode(92)).join('-').trim();
+    return fileName || fallbackName || 'preset';
+  }
 
-	const image = await new Promise<Blob>((resolve, reject) => {
-		canvas.toBlob((blob) => {
-			if (blob) resolve(blob);
-			else reject(new Error('Could not render the preset image.'));
-		}, 'image/png');
-	});
+  function finish() {
+    window.clearTimeout(timeoutId);
+    window.removeEventListener('message', handleMessage);
+    targetWindow = null;
+    button.disabled = false;
+  }
 
-	const pngBytes = new Uint8Array(await image.arrayBuffer());
-	const iend = findPngChunk(pngBytes, 'IEND');
-	if (!iend || iend.length !== 0) throw new Error('The preset image could not be completed.');
+  function handleMessage(event) {
+    if (event.source !== targetWindow || event.origin !== targetOrigin || !event.data || event.data.token !== transferToken) return;
+    if (event.data.type === 'fruity-jibesh-preset-ready') {
+      try {
+        const preset = JSON.parse(presetJson);
+        const fileName = getFileName(preset.name);
+        const presetBytes = new TextEncoder().encode(presetJson);
+        const payload = presetBytes.buffer;
+        targetWindow.postMessage({ type: 'fruity-jibesh-preset-data', token: transferToken, fileName, payload }, targetOrigin, [payload]);
+        status.textContent = 'Preset sent locally. Waiting for the game to finish importing...';
+      } catch {
+        status.textContent = 'Could not read the preset data in this file.';
+        finish();
+      }
+    } else if (event.data.type === 'fruity-jibesh-preset-complete') {
+      status.textContent = event.data.success
+        ? 'Preset imported and saved. The game is ready in the Fruity Jibesh tab.'
+        : (event.data.error || 'The preset could not be imported.');
+      finish();
+    }
+  }
 
-	const lengthBytes = new Uint8Array(4);
-	new DataView(lengthBytes.buffer).setUint32(0, payload.length, false);
-	const checksumBytes = new Uint8Array(4);
-	new DataView(checksumBytes.buffer).setUint32(
-		0,
-		calculateCrc32([PNG_PRESET_CHUNK_TYPE, payload]),
-		false
-	);
-
-	return new Blob(
-		[
-			pngBytes.subarray(0, iend.offset),
-			lengthBytes,
-			PNG_PRESET_CHUNK_TYPE,
-			payload,
-			checksumBytes,
-			pngBytes.subarray(iend.offset)
-		],
-		{ type: 'image/png' }
-	);
+  button.addEventListener('click', () => {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.focus();
+      return;
+    }
+    const tokenBytes = new Uint8Array(16);
+    crypto.getRandomValues(tokenBytes);
+    transferToken = Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    window.addEventListener('message', handleMessage);
+    targetWindow = window.open(targetOrigin + '/#fruity-preset=' + transferToken, '_blank');
+    if (!targetWindow) {
+      finish();
+      status.textContent = 'Your browser blocked the new tab. Allow pop-ups for this file and try again.';
+      return;
+    }
+    button.disabled = true;
+    status.textContent = 'Opening Fruity Jibesh and waiting for a secure local connection...';
+    timeoutId = window.setTimeout(() => {
+      finish();
+      status.textContent = 'The connection timed out. Keep this file open and try again.';
+    }, 60000);
+  });
+})();
+</script>
+</body>
+</html>`;
+	return new Blob([html], { type: 'text/html;charset=utf-8' });
 }
 
-function extractPresetJsonFromPng(bytes: Uint8Array): Uint8Array {
-	const chunk = findPngChunk(bytes, 'frPs');
-	if (!chunk) throw new Error('This PNG does not contain a Fruity Jibesh preset.');
-	if (chunk.length <= 0 || chunk.length > MAX_PRESET_FILE_SIZE_BYTES) {
-		throw new Error('The preset attachment in this PNG is invalid.');
-	}
+async function extractPresetJsonFromPng(file: File): Promise<Uint8Array> {
+	const dimensions = await getPngDimensions(file);
+	const bitmap = await createImageBitmap(file);
+	try {
+		const scale = bitmap.width / PNG_INSTRUCTION_WIDTH;
+		const instructionHeight = Math.ceil(PNG_INSTRUCTION_HEIGHT * scale);
+		if (bitmap.width !== dimensions.width || bitmap.height !== dimensions.height) {
+			throw new Error('This PNG does not contain valid preset pixel data.');
+		}
 
-	const type = bytes.subarray(chunk.offset + 4, chunk.offset + 8);
-	const payloadStart = chunk.offset + 8;
-	const payloadEnd = payloadStart + chunk.length;
-	const expectedChecksum = new DataView(bytes.buffer, bytes.byteOffset + payloadEnd, 4).getUint32(
-		0,
-		false
-	);
-	if (calculateCrc32([type, bytes.subarray(payloadStart, payloadEnd)]) !== expectedChecksum) {
-		throw new Error('The preset attachment in this PNG is damaged.');
+		const canvas = document.createElement('canvas');
+		canvas.width = bitmap.width;
+		canvas.height = bitmap.height;
+		const context = canvas.getContext('2d', { willReadFrequently: true });
+		if (!context) throw new Error('Could not read the preset image.');
+		context.drawImage(bitmap, 0, 0);
+
+		const headerPixels = context.getImageData(0, instructionHeight, bitmap.width, 1).data;
+		const header = readRgbPixelBytes(headerPixels, 0, PIXEL_PRESET_HEADER_SIZE);
+		if (!PIXEL_PRESET_MAGIC.every((byte, index) => header[index] === byte)) {
+			throw new Error('This PNG does not contain a Fruity Jibesh preset.');
+		}
+
+		const headerView = new DataView(header.buffer);
+		const payloadLength = headerView.getUint32(4, false);
+		const expectedChecksum = headerView.getUint32(8, false);
+		if (payloadLength <= 0 || payloadLength > MAX_PRESET_FILE_SIZE_BYTES) {
+			throw new Error('The preset pixel data in this PNG is invalid.');
+		}
+
+		const pixelCount = Math.ceil((PIXEL_PRESET_HEADER_SIZE + payloadLength) / 3);
+		const expectedWidth = Math.max(PNG_INSTRUCTION_WIDTH, Math.ceil(Math.sqrt(pixelCount)));
+		const expectedInstructionHeight = Math.ceil(
+			(PNG_INSTRUCTION_HEIGHT * expectedWidth) / PNG_INSTRUCTION_WIDTH
+		);
+		const expectedHeight = expectedInstructionHeight + Math.ceil(pixelCount / expectedWidth);
+		if (bitmap.width !== expectedWidth || bitmap.height !== expectedHeight) {
+			throw new Error('The preset pixel data in this PNG is malformed.');
+		}
+
+		const pixelData = context.getImageData(
+			0,
+			instructionHeight,
+			bitmap.width,
+			bitmap.height - instructionHeight
+		).data;
+		const payload = readRgbPixelBytes(pixelData, PIXEL_PRESET_HEADER_SIZE, payloadLength);
+		if (calculateCrc32([payload]) !== expectedChecksum) {
+			throw new Error('The preset pixel data in this PNG is damaged.');
+		}
+		return payload;
+	} finally {
+		bitmap.close();
 	}
-	return bytes.slice(payloadStart, payloadEnd);
 }
 
 function extractPresetJsonFromPdf(bytes: Uint8Array): Uint8Array {
@@ -472,41 +580,23 @@ export async function exportFruitPresetFile(preset: FruitPreset): Promise<Blob> 
 		images: preset.images,
 		sounds
 	};
-	return createPresetPng(encodeText(JSON.stringify(file)));
+	return createPresetHtml(JSON.stringify(file));
 }
 
-export async function importFruitPresetFile(file: File): Promise<string> {
-	const lowerFileName = file.name.toLowerCase();
-	const isPng = lowerFileName.endsWith('.png');
-	const isPdf = lowerFileName.endsWith('.pdf');
-	const isLegacyPreset = lowerFileName.endsWith('.arjcfruits');
-	if (!isPng && !isPdf && !isLegacyPreset) {
-		throw new Error('Choose a Fruity Jibesh PNG preset image.');
-	}
-	if (file.size > MAX_PRESET_FILE_SIZE_BYTES) {
+export async function importFruitPresetData(
+	payload: ArrayBuffer | Uint8Array,
+	fileName: string
+): Promise<string> {
+	const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+	if (bytes.length > MAX_PRESET_FILE_SIZE_BYTES) {
 		throw new Error('The preset file is too large to import.');
 	}
 
 	let parsed: unknown;
 	try {
-		const json = isPng
-			? new TextDecoder('utf-8', { fatal: true }).decode(
-					extractPresetJsonFromPng(new Uint8Array(await file.arrayBuffer()))
-				)
-			: isPdf
-				? new TextDecoder('utf-8', { fatal: true }).decode(
-						extractPresetJsonFromPdf(new Uint8Array(await file.arrayBuffer()))
-					)
-				: await file.text();
-		parsed = JSON.parse(json);
+		parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
 	} catch {
-		throw new Error(
-			isPng
-				? 'This PNG does not contain valid preset data.'
-				: isPdf
-					? 'This PDF does not contain valid preset data.'
-					: 'This preset file is not valid JSON.'
-		);
+		throw new Error('This preset data is not valid.');
 	}
 	if (
 		!isRecord(parsed) ||
@@ -517,10 +607,8 @@ export async function importFruitPresetFile(file: File): Promise<string> {
 		throw new Error('This is not a supported fruit preset file.');
 	}
 
-	const extension = isPng ? '.png' : isPdf ? '.pdf' : '.arjcfruits';
-	const fileName = file.name.slice(0, -extension.length).trim();
-	if (!fileName) throw new Error('The preset file must have a name.');
-	const name = uniquePresetName(fileName);
+	const name = uniquePresetName(fileName.trim());
+	if (!name) throw new Error('The preset file must have a name.');
 	await saveFruitPreset({
 		name,
 		names: validateNames(parsed.names),
@@ -528,6 +616,40 @@ export async function importFruitPresetFile(file: File): Promise<string> {
 		sounds: validateSounds(parsed.sounds)
 	});
 	return name;
+}
+
+export async function importFruitPresetFile(file: File): Promise<string> {
+	const lowerFileName = file.name.toLowerCase();
+	const isPng = lowerFileName.endsWith('.png');
+	const isPdf = lowerFileName.endsWith('.pdf');
+	const isLegacyPreset = lowerFileName.endsWith('.arjcfruits');
+	if (!isPng && !isPdf && !isLegacyPreset) {
+		throw new Error('Choose a Fruity Jibesh PNG preset image.');
+	}
+	if (file.size > (isPng ? MAX_PRESET_IMAGE_FILE_SIZE_BYTES : MAX_PRESET_FILE_SIZE_BYTES)) {
+		throw new Error('The preset file is too large to import.');
+	}
+
+	let payload: Uint8Array;
+	try {
+		payload = isPng
+			? await extractPresetJsonFromPng(file)
+			: isPdf
+				? extractPresetJsonFromPdf(new Uint8Array(await file.arrayBuffer()))
+				: new Uint8Array(await file.arrayBuffer());
+	} catch {
+		throw new Error(
+			isPng
+				? 'This PNG does not contain valid preset data.'
+				: isPdf
+					? 'This PDF does not contain valid preset data.'
+					: 'This preset file is not valid JSON.'
+		);
+	}
+
+	const extension = isPng ? '.png' : isPdf ? '.pdf' : '.arjcfruits';
+	const fileName = file.name.slice(0, -extension.length).trim();
+	return importFruitPresetData(payload, fileName);
 }
 
 function uniquePresetName(originalName: string): string {

@@ -19,6 +19,7 @@ import {
 import {
 	exportFruitPresetFile,
 	getFruitPreset,
+	importFruitPresetData,
 	importFruitPresetFile
 } from '../../stores/fruitPresets';
 import FruitPresetControls from '../FruitPresetControls.svelte';
@@ -82,7 +83,7 @@ describe('FruitPresetControls', () => {
 		});
 	});
 
-	it('exports a PNG preset image with embedded data and imports it as a saved preset', async () => {
+	it('exports a self-contained HTML launcher and imports its data locally', async () => {
 		const fileContent = await exportFruitPresetFile({
 			name: 'Embedded preset name',
 			names: { apple: 'Ruby' },
@@ -93,19 +94,31 @@ describe('FruitPresetControls', () => {
 				})
 			}
 		});
-		expect(fileContent.type).toBe('image/png');
-		const pngContents = new Uint8Array(await fileContent.arrayBuffer());
-		expect(Array.from(pngContents.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-		expect(new TextDecoder().decode(pngContents)).toContain('frPs');
-		const file = new File([fileContent], 'weekend.png', { type: 'image/png' });
-
-		const importedName = await importFruitPresetFile(file);
+		expect(fileContent.type).toBe('text/html;charset=utf-8');
+		const html = await fileContent.text();
+		expect(html).toContain('Open preset in Fruity Jibesh');
+		expect(html).toContain('window.open(targetOrigin');
+		expect(html).toContain('fruity-jibesh-preset-data');
+		expect(html).toContain("connect-src 'none'");
+		const presetJson =
+			/<script id="preset-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)?.[1];
+		expect(presetJson).toBeTruthy();
+		if (!presetJson) throw new Error('HTML launcher did not include preset data.');
+		const serialized = JSON.parse(presetJson);
+		expect(serialized.names.apple).toBe('Ruby');
+		const payload = new TextEncoder().encode(presetJson);
+		const importedName = await importFruitPresetData(payload, 'Weekend');
 		const preset = await getFruitPreset(importedName);
 
 		expect(importedName).toBe('Weekend');
 		expect(preset?.names.apple).toBe('Ruby');
 		expect(preset?.images.apple).toBe('data:image/png;base64,cHJlc2V0');
-		expect(preset?.sounds.apple).toBeInstanceOf(Blob);
+		const importedSound = preset?.sounds.apple;
+		expect(importedSound).toBeInstanceOf(Blob);
+		if (!(importedSound instanceof Blob)) throw new Error('Preset audio did not import.');
+		expect(Array.from(new Uint8Array(await importedSound.arrayBuffer()))).toEqual([
+			0xff, 0xfb, 0x90, 0x64
+		]);
 	});
 
 	it('continues to import legacy .arjcfruits files', async () => {
@@ -126,7 +139,7 @@ describe('FruitPresetControls', () => {
 		expect((await getFruitPreset(importedName))?.names.apple).toBe('Ruby');
 	});
 
-	it('imports a PNG from the Load dialog and saves it locally', async () => {
+	it('imports a legacy preset from the Load dialog and saves it locally', async () => {
 		localStorage.setItem(
 			'subak-fruit-presets',
 			JSON.stringify([
@@ -137,13 +150,15 @@ describe('FruitPresetControls', () => {
 				}
 			])
 		);
-		const content = await exportFruitPresetFile({
+		const content = JSON.stringify({
+			format: 'arjcfruits',
+			version: 1,
 			name: 'Embedded preset name',
 			names: { apple: 'Ruby' },
 			images: { apple: 'data:image/png;base64,cHJlc2V0' },
 			sounds: {}
 		});
-		const file = new File([content], 'shared.png', { type: 'image/png' });
+		const file = new File([content], 'shared.arjcfruits', { type: 'application/json' });
 		const { getByRole, getByLabelText } = render(FruitPresetControls);
 
 		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
