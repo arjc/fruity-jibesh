@@ -724,7 +724,7 @@ function handleShakeButton(): void {
           <label class="menu-preset-card import-preset-card" class:disabled={!gameReady || menuBusy}>
             <input
               type="file"
-              accept=".pdf,application/pdf,.arjcfruits,application/json"
+              accept=".png,image/png,.pdf,application/pdf,.arjcfruits,application/json"
               aria-label="Import preset from file"
               disabled={!gameReady || menuBusy}
               onchange={handleMenuPresetFileChange}

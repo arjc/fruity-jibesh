@@ -29,13 +29,13 @@ The original game, "Merge Big Watermelon" (合成大西瓜), was created by Mead
 - **Game over** when any fruit breaches the danger line at the top.
 - **Customize fruits** — change fruit names, images, and audio; audio can be uploaded or recorded as MP3.
 - **Save and load presets** — keep named presets in this browser, including their fruit names, images, and audio.
-- **Share presets** — export a PDF with the preset data embedded, or import a PDF shared by another player.
+- **Share presets** — export a PNG image with the preset data embedded, or import one shared by another player.
 - **Preset start screen** — choose a recent preset, browse quick tips, and review the game instructions before starting.
 - **Offline Support** — no backend or analytics requests; game pages and assets (including physics WASM and audio) are cached via a service worker.
 - **Local high scores** — scores are saved on your device with IndexedDB.
 - **Installable PWA** — can be installed as a standalone application on mobile and desktop devices.
 
-Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. Exported PDF files include a short import instruction page and bundle preset names, fruit custom names, images, and MP3 audio for sharing. Previously exported `.arjcfruits` files can still be imported.
+Preset details stay on the device: small metadata is stored in `localStorage`, while images and audio are stored in IndexedDB. Exported PNG images display import instructions and bundle preset names, fruit custom names, images, and MP3 audio for sharing. Previously exported PDF and `.arjcfruits` files can still be imported.
 
 ---
 

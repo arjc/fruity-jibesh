@@ -80,7 +80,7 @@ async function exportPreset(): Promise<void> {
 			images: { ...fruitImageOverrides },
 			sounds: { ...fruitMergeSounds }
 		});
-		const fileName = 'preset.pdf';
+		const fileName = 'preset.png';
 		objectUrl = URL.createObjectURL(file);
 		const link = document.createElement('a');
 		link.href = objectUrl;
@@ -187,7 +187,7 @@ async function loadPreset(name: string): Promise<void> {
 				<span>+ Add from file</span>
 				<input
 					type="file"
-					accept=".pdf,application/pdf,.arjcfruits,application/json"
+					accept=".png,image/png,.pdf,application/pdf,.arjcfruits,application/json"
 					aria-label="Add preset from file"
 					disabled={presetBusy}
 					onchange={handlePresetFileChange}

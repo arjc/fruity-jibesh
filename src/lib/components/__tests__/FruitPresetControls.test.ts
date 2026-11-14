@@ -82,7 +82,7 @@ describe('FruitPresetControls', () => {
 		});
 	});
 
-	it('exports a PDF preset with import instructions and imports it as a saved preset', async () => {
+	it('exports a PNG preset image with embedded data and imports it as a saved preset', async () => {
 		const fileContent = await exportFruitPresetFile({
 			name: 'Embedded preset name',
 			names: { apple: 'Ruby' },
@@ -93,14 +93,11 @@ describe('FruitPresetControls', () => {
 				})
 			}
 		});
-		expect(fileContent.type).toBe('application/pdf');
-		const pdfContents = await fileContent.text();
-		expect(pdfContents.startsWith('%PDF-1.7')).toBe(true);
-		expect(pdfContents).toContain('(Save this file and goto) Tj');
-		expect(pdfContents).toContain(
-			'(Choose "+ import from file" and import this pdf file there...) Tj'
-		);
-		const file = new File([fileContent], 'weekend.pdf', { type: 'application/pdf' });
+		expect(fileContent.type).toBe('image/png');
+		const pngContents = new Uint8Array(await fileContent.arrayBuffer());
+		expect(Array.from(pngContents.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+		expect(new TextDecoder().decode(pngContents)).toContain('frPs');
+		const file = new File([fileContent], 'weekend.png', { type: 'image/png' });
 
 		const importedName = await importFruitPresetFile(file);
 		const preset = await getFruitPreset(importedName);
@@ -129,7 +126,7 @@ describe('FruitPresetControls', () => {
 		expect((await getFruitPreset(importedName))?.names.apple).toBe('Ruby');
 	});
 
-	it('imports a PDF from the Load dialog and saves it locally', async () => {
+	it('imports a PNG from the Load dialog and saves it locally', async () => {
 		localStorage.setItem(
 			'subak-fruit-presets',
 			JSON.stringify([
@@ -146,7 +143,7 @@ describe('FruitPresetControls', () => {
 			images: { apple: 'data:image/png;base64,cHJlc2V0' },
 			sounds: {}
 		});
-		const file = new File([content], 'shared.pdf', { type: 'application/pdf' });
+		const file = new File([content], 'shared.png', { type: 'image/png' });
 		const { getByRole, getByLabelText } = render(FruitPresetControls);
 
 		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
