@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FRUITS } from '../../constants';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FRUITS, GAMEPLAY_TUNING } from '../../constants';
+import { Fruit } from '../../game/Fruit';
+import { getFruitDisplayName } from '../fruitCustomizations.svelte';
 import { GameState } from '../game.svelte.js';
 
 // Stub physics related methods before constructing GameState
@@ -57,8 +59,47 @@ beforeEach(() => {
 	vi.clearAllMocks();
 });
 
+afterEach(() => {
+	vi.useRealTimers();
+});
+
 describe('GameState Methods', () => {
+	it('plays only one fruit-specific pop when several merges happen in one physics step', () => {
+		const state = new GameState({});
+		const audioManager = { playSound: vi.fn() };
+		state.audioManager = audioManager as any;
+
+		const makeFruit = (handle: number, fruitIndex: number) =>
+			Object.assign(Object.create(Fruit.prototype), {
+				fruitIndex,
+				body: {
+					handle,
+					isValid: () => true,
+					linvel: () => ({ x: 0, y: 0 })
+				}
+			}) as Fruit;
+
+		const fruits = [makeFruit(1, 0), makeFruit(2, 0), makeFruit(3, 1), makeFruit(4, 1)];
+		fruits.forEach((fruit) => {
+			state.colliderMap.set(fruit.body.handle, fruit);
+		});
+		state.mergeFruits = vi.fn();
+		state.eventQueue = {
+			drainCollisionEvents: (callback) => {
+				callback(1, 2, true);
+				callback(3, 4, true);
+			}
+		} as any;
+
+		state.checkCollisions();
+
+		expect(audioManager.playSound).toHaveBeenCalledTimes(1);
+		expect(audioManager.playSound).toHaveBeenCalledWith('pop', { volume: 1, rate: 1.2599 });
+		expect(state.mergeFruits).toHaveBeenCalledTimes(2);
+	});
+
 	it('merges two fruits of the same type', () => {
+		vi.useFakeTimers();
 		const state = new GameState({});
 		state.physicsWorld = {} as any; // mock physicsWorld
 		// add two fruits of type 0
@@ -69,9 +110,11 @@ describe('GameState Methods', () => {
 		expect(state.fruits.length).toBe(initialCount - 1);
 		expect(state.fruits[0].fruitIndex).toBe(1);
 		expect(state.score).toBe(FRUITS[1].points);
+		expect(state.mergeNotices[0].message).toBe(`${getFruitDisplayName(FRUITS[1].name)} found!`);
 	});
 
 	it('merges two watermelons (final fruit) and awards the watermelon bonus', () => {
+		vi.useFakeTimers();
 		const state = new GameState({});
 		state.physicsWorld = {} as any;
 		const maxIndex = FRUITS.length - 1;
@@ -81,6 +124,25 @@ describe('GameState Methods', () => {
 		state.mergeFruits(a!, b!);
 		expect(state.fruits.length).toBe(initialCount - 2);
 		expect(state.score).toBe(100);
+		expect(state.mergeNotices[0].message).toBe(
+			`${getFruitDisplayName(FRUITS[maxIndex].name)} found!`
+		);
+	});
+
+	it('removes merge announcements after three seconds', () => {
+		vi.useFakeTimers();
+		const state = new GameState({});
+		state.physicsWorld = {} as any;
+		const a = state.addFruit(0, 0.2, 0.2);
+		const b = state.addFruit(0, 0.25, 0.2);
+
+		state.mergeFruits(a!, b!);
+		expect(state.mergeNotices).toHaveLength(1);
+
+		vi.advanceTimersByTime(2999);
+		expect(state.mergeNotices).toHaveLength(1);
+		vi.advanceTimersByTime(1);
+		expect(state.mergeNotices).toHaveLength(0);
 	});
 
 	it('drops a fruit correctly', () => {
@@ -95,6 +157,34 @@ describe('GameState Methods', () => {
 		expect(state.fruits[0].fruitIndex).toBe(1);
 		expect(state.dropCount).toBe(1);
 		expect(state.currentFruitIndex).toBe(2);
+	});
+
+	it('alternates strong impulses and spin across active fruits when shaken', () => {
+		vi.useFakeTimers();
+		const state = new GameState({});
+		state.physicsWorld = {} as any;
+		state.status = 'playing';
+
+		const appliedImpulses: { x: number; y: number }[] = [];
+		const body = {
+			isValid: vi.fn().mockReturnValue(true),
+			applyImpulse: vi.fn((impulse: { x: number; y: number }) => appliedImpulses.push(impulse)),
+			applyTorqueImpulse: vi.fn()
+		};
+		state.fruits = [{ body } as any];
+
+		state.shakeContainer();
+		vi.advanceTimersByTime(GAMEPLAY_TUNING.shake.pulseIntervalMs - 1);
+		expect(body.applyImpulse).toHaveBeenCalledTimes(1);
+		vi.advanceTimersByTime(1);
+		expect(body.applyImpulse).toHaveBeenCalledTimes(2);
+		vi.runAllTimers();
+
+		const expectedImpulses = GAMEPLAY_TUNING.shake.impulses.map((impulse) =>
+			Number((impulse + GAMEPLAY_TUNING.shake.horizontalVariation).toFixed(2))
+		);
+		expect(appliedImpulses.map(({ x }) => Number(x.toFixed(2)))).toEqual(expectedImpulses);
+		expect(body.applyTorqueImpulse).toHaveBeenCalledTimes(GAMEPLAY_TUNING.shake.impulses.length);
 	});
 
 	it('handles checkGameOver', () => {
@@ -140,8 +230,6 @@ describe('GameState Methods', () => {
 		state.fruits = [{ destroy: vi.fn(), collider: { handle: 1 } }] as any;
 		state.score = 100;
 		state.dropCount = 5;
-		state.telemetry = { reset: vi.fn() } as any;
-		state.leaderboard = { reset: vi.fn() } as any;
 
 		state.resetGame();
 
@@ -156,8 +244,6 @@ describe('GameState Methods', () => {
 		state.physicsWorld = {} as any;
 		(state as any).gameOverFruitId = 42;
 		state.fruits = [{ destroy: vi.fn(), collider: { handle: 1 } }] as any;
-		state.telemetry = { reset: vi.fn() } as any;
-		state.leaderboard = { reset: vi.fn() } as any;
 
 		state.resetGame();
 
@@ -167,18 +253,12 @@ describe('GameState Methods', () => {
 	it('restarts game correctly', () => {
 		const state = new GameState({});
 		state.resetGame = vi.fn();
-		state.telemetry = { reset: vi.fn(), setSession: vi.fn() } as any;
-		state.leaderboard = {
-			reset: vi.fn(),
-			startSession: vi.fn().mockResolvedValue(undefined),
-			sessionToken: 'mock-token'
-		} as any;
+		state.setStatus = vi.fn() as any;
 
 		state.restartGame();
 
 		expect(state.resetGame).toHaveBeenCalled();
-		expect(state.leaderboard.startSession).toHaveBeenCalled();
-		expect(state.status).toBe('playing');
+		expect(state.setStatus).toHaveBeenCalledWith('playing');
 	});
 
 	it('setStatus handles animation frame cancellation', () => {

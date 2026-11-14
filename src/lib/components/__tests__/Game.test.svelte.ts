@@ -29,15 +29,17 @@ vi.mock('@dimforge/rapier2d-compat', () => ({
 
 vi.mock('../../stores/db', () => ({
 	saveScore: vi.fn().mockResolvedValue(undefined),
-	getHighScores: vi.fn().mockResolvedValue([])
+	getHighScores: vi.fn().mockResolvedValue([]),
+	getFruitMergeSounds: vi.fn().mockResolvedValue({}),
+	saveFruitMergeSound: vi.fn().mockResolvedValue(undefined),
+	deleteFruitMergeSound: vi.fn().mockResolvedValue(undefined)
 }));
 
-import { render, fireEvent } from '@testing-library/svelte';
+import { cleanup, fireEvent, render } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { describe, it, expect, beforeEach } from 'vitest';
-
-import Game from '../Game.svelte';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as gameStateModule from '../../stores/game.svelte.js';
+import Game from '../Game.svelte';
 
 // --- Mock GameState ---------------------------------------------------------
 const instances: any[] = [];
@@ -57,30 +59,10 @@ function createMockGameState() {
 		physicsAccumulator: 0,
 		physicsWorld: { integrationParameters: { dt: 1 / 60 } } as any,
 		mergeEffects: [] as any[],
+		mergeNotices: [] as any[],
 		dropCount: 0,
 		gameOverFruitId: null as number | null,
 		audioManager: { isMuted: false, toggleMute: vi.fn() },
-		telemetry: {
-			fetchSession: vi.fn(),
-			submitGlobalScore: vi.fn(),
-			reset: vi.fn(),
-			buildSubmissionPayload: vi.fn().mockResolvedValue(null)
-		},
-		leaderboard: {
-			submissionStatus: 'idle',
-			sessionToken: null,
-			submitScore: vi.fn(),
-			submitPendingUsername: vi.fn().mockResolvedValue(undefined),
-			dailyScores: [],
-			dailyScoresStatus: 'idle',
-			overallScores: [],
-			overallScoresStatus: 'idle',
-			fetchDailyScores: vi.fn(),
-			fetchOverallScores: vi.fn(),
-			editToken: null,
-			submittedId: null,
-			submittedRank: null
-		},
 		// Methods
 		dropFruit: (index: number, x: number, y: number) => {
 			state.fruitsState.push({ id: Math.random(), x, y, rotation: 0, fruitIndex: index });
@@ -153,17 +135,24 @@ beforeEach(() => {
 	restartGameSpy.mockClear();
 });
 
+afterEach(() => {
+	cleanup();
+});
+
 describe('Game component', () => {
-	it('initializes with introduction modal open', () => {
-		const { getAllByText } = render(Game);
-		expect(getAllByText('Subak Game').length).toBeGreaterThan(0);
+	it('shows a minimal Fruity Jibesh start screen before the game begins', () => {
+		const { getByRole, queryByRole, container } = render(Game);
+		expect(getByRole('heading', { name: 'Fruity Jibesh' })).not.toBeNull();
+		expect(getByRole('button', { name: 'Start Game' })).not.toBeNull();
+		expect(container.querySelector('.gameplay-area')).toBeNull();
+		expect(queryByRole('button', { name: /about/i })).toBeNull();
 		expect(instances.length).toBe(1);
 		expect(instances[0].score).toBe(0);
 	});
 
 	it('moves drop line and preview fruit with pointer', async () => {
 		const { container, getAllByRole } = render(Game);
-		// close introduction modal → sets status to 'playing'
+		// Start the game from the landing screen.
 		await fireEvent.click(getAllByRole('button', { name: /start game/i })[0]);
 		await tick();
 
@@ -198,23 +187,6 @@ describe('Game component', () => {
 		await tick();
 
 		expect(dropFruitSpy).toHaveBeenCalled();
-	});
-
-	it('opens introduction modal via About button and pauses game', async () => {
-		const { getAllByRole } = render(Game);
-
-		// Close intro first
-		await fireEvent.click(getAllByRole('button', { name: /start game/i })[0]);
-		await tick();
-
-		// Click About → pauses via setStatus('paused')
-		await fireEvent.click(getAllByRole('button', { name: /about/i })[0]);
-		await tick();
-
-		expect(setStatusSpy).toHaveBeenCalledWith('paused');
-
-		// Modal reappears with "Resume Game" text (derived from 'paused' status)
-		expect(getAllByRole('button', { name: /resume game/i }).length).toBeGreaterThan(0);
 	});
 
 	it('maintains correct fruit images after state changes (merges/removals)', async () => {

@@ -54,29 +54,16 @@ The game is built on **Rapier2D** (WASM rigid-body physics). The central class i
 
 ### Svelte 5 Patterns
 
-All reactive state uses Svelte 5 runes (`$state`, `$derived`, `$effect`). Classes like `GameState`, `LeaderboardClient`, `TelemetryState`, and `AudioManager` are instantiated and hold `$state` properties — they are passed around as objects, not imported as module-level stores.
-
-### Environment Variables
-
-Copy `.env.example` to `.env`. Key variables:
-
-| Variable | Purpose |
-|---|---|
-| `VITE_POSTHOG_TOKEN` | PostHog analytics (optional) |
-| `PUBLIC_SHARED_CLIENT_SALT` | Anti-cheat hash salt |
-| `PUBLIC_LEADERBOARD_URL` | Leaderboard API base URL (defaults to `http://localhost:3001`) |
-
-The leaderboard is fully optional — `LeaderboardClient` (`src/lib/api/leaderboard-client.svelte.ts`) gracefully handles unavailable servers.
+All reactive state uses Svelte 5 runes (`$state`, `$derived`, `$effect`). `GameState` and `AudioManager` are instantiated classes that hold `$state` properties.
 
 ### Testing
 
 Tests live in `__tests__/` directories adjacent to source files. Vitest runs in **browser mode** (real Chromium via Playwright) because the game uses browser APIs. The vitest config (`vitest.config.ts`) stubs out:
 - `*.svg?component` imports (SvelteKit-only plugin not available in Vitest)
-- `$env/dynamic/public` → `src/__mocks__/env.ts`
 
-### SVG Assets
+### Image Assets
 
-Fruit sprites and UI icons in `src/lib/svg/` and `src/lib/icons/` are imported as Svelte components using the `@poppanator/sveltekit-svg` plugin (e.g., `import Icon from './icon.svg?component'`). This import style only works in the SvelteKit app context; Vitest stubs them.
+Fruit sprites are local PNGs in `src/lib/images/fruits/`. UI icons remain inline SVG components in `src/lib/icons/`.
 
 ### Dual Build Notes
 

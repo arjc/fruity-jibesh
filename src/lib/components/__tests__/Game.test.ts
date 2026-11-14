@@ -1,13 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { cleanup, render } from '@testing-library/svelte';
+import { tick } from 'svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GameState } from '../../stores/game.svelte.js';
 import Game from '../Game.svelte';
-
-// GameScreenshot uses getContext — stub it to avoid context errors
-vi.mock('../GameScreenshot.svelte', async () => {
-	const { default: stub } = await import('../../../__mocks__/GameScreenshot.svelte');
-	return { default: stub };
-});
 
 const proto = GameState.prototype as any;
 
@@ -40,9 +35,46 @@ function getVisibilityChangeHandler(addSpy: ReturnType<typeof vi.spyOn>) {
 	return call?.[1] as (() => void) | undefined;
 }
 
+function getDeviceMotionHandler(addSpy: ReturnType<typeof vi.spyOn>) {
+	const call = (addSpy.mock.calls as [string, EventListener][]).find(
+		([type]) => type === 'devicemotion'
+	);
+	return call?.[1] as ((event: DeviceMotionEvent) => void) | undefined;
+}
+
 function setHidden(hidden: boolean) {
 	Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
 }
+
+describe('Game device-motion shake', () => {
+	it('shakes only on a strong device-motion event and removes its listener on unmount', async () => {
+		const shakeSpy = vi.spyOn(proto, 'shakeContainer').mockImplementation(() => {});
+		const addSpy = vi.spyOn(window, 'addEventListener');
+		const removeSpy = vi.spyOn(window, 'removeEventListener');
+		const { unmount } = render(Game);
+		await tick();
+
+		const handler = getDeviceMotionHandler(addSpy);
+		expect(handler).toBeDefined();
+
+		const weakMotion = new Event('devicemotion') as DeviceMotionEvent;
+		Object.defineProperty(weakMotion, 'acceleration', {
+			value: { x: 2, y: 0, z: 0 }
+		});
+		handler?.(weakMotion);
+		expect(shakeSpy).not.toHaveBeenCalled();
+
+		const strongMotion = new Event('devicemotion') as DeviceMotionEvent;
+		Object.defineProperty(strongMotion, 'acceleration', {
+			value: { x: 16, y: 0, z: 0 }
+		});
+		handler?.(strongMotion);
+		expect(shakeSpy).toHaveBeenCalledOnce();
+
+		unmount();
+		expect(removeSpy).toHaveBeenCalledWith('devicemotion', handler);
+	});
+});
 
 describe('Game beforeunload guard', () => {
 	it('calls preventDefault when game is in progress', () => {

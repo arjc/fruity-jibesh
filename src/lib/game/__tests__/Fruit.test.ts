@@ -1,12 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ActiveEvents, ColliderDesc, RigidBodyDesc, type World } from '@dimforge/rapier2d-compat';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { GAMEPLAY_TUNING } from '../../constants';
 import { Fruit } from '../Fruit';
-import { RigidBodyDesc, ColliderDesc, ActiveEvents, type World } from '@dimforge/rapier2d-compat';
 
 vi.mock('../../constants', () => ({
 	FRUITS: [
-		{ name: 'Cherry', radius: 10, points: 5 },
-		{ name: 'Strawberry', radius: 15, points: 15 }
+		{ name: 'Apple', radius: 10, points: 5 },
+		{ name: 'Blueberry', radius: 15, points: 15 }
 	],
+	GAMEPLAY_TUNING: {
+		fruitColliderScale: 1.1
+	},
 	GAME_OVER_HEIGHT: -100
 }));
 
@@ -33,7 +37,7 @@ vi.mock('@dimforge/rapier2d-compat', () => ({
 		dynamic: vi.fn(() => mockRigidBodyDesc)
 	},
 	ColliderDesc: {
-		ball: vi.fn(() => mockColliderDesc)
+		convexHull: vi.fn(() => mockColliderDesc)
 	},
 	World: vi.fn()
 }));
@@ -86,26 +90,29 @@ describe('Fruit', () => {
 		vi.mocked(RigidBodyDesc.dynamic).mockReturnValue(
 			mockRigidBodyDesc as unknown as ReturnType<typeof RigidBodyDesc.dynamic>
 		);
-		vi.mocked(ColliderDesc.ball).mockReturnValue(
-			mockColliderDesc as unknown as ReturnType<typeof ColliderDesc.ball>
+		vi.mocked(ColliderDesc.convexHull).mockReturnValue(
+			mockColliderDesc as unknown as ReturnType<typeof ColliderDesc.convexHull>
 		);
 	});
 
 	it('creates a fruit and initializes physical properties correctly', () => {
 		const fruit = new Fruit(0, 50, 60, mockWorld as unknown as World);
 
-		expect(fruit.name).toBe('Cherry');
+		expect(fruit.name).toBe('Apple');
 		expect(fruit.radius).toBe(10);
 		expect(fruit.points).toBe(5);
 		expect(fruit.fruitIndex).toBe(0);
 
+		const vertices = vi.mocked(ColliderDesc.convexHull).mock.calls[0][0];
+		expect(vertices[0]).toBeCloseTo(-9.9 * GAMEPLAY_TUNING.fruitColliderScale);
 		expect(RigidBodyDesc.dynamic).toHaveBeenCalled();
 		expect(mockRigidBodyDesc.setTranslation).toHaveBeenCalledWith(50, 60);
 		expect(mockRigidBodyDesc.setLinearDamping).toHaveBeenCalledWith(0.2);
 		expect(mockRigidBodyDesc.setAngularDamping).toHaveBeenCalledWith(0.4);
 		expect(mockWorld.createRigidBody).toHaveBeenCalledWith(mockRigidBodyDesc);
 
-		expect(ColliderDesc.ball).toHaveBeenCalledWith(10);
+		expect(ColliderDesc.convexHull).toHaveBeenCalledWith(expect.any(Float32Array));
+		expect(vi.mocked(ColliderDesc.convexHull).mock.calls[0][0].length).toBeGreaterThan(6);
 		expect(mockColliderDesc.setRestitution).toHaveBeenCalledWith(0.25);
 		expect(mockColliderDesc.setFriction).toHaveBeenCalledWith(0.35);
 		expect(mockColliderDesc.setMass).toHaveBeenCalledWith(0.1);

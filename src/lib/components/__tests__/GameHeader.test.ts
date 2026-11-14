@@ -1,22 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/svelte';
+import { cleanup, fireEvent, render } from '@testing-library/svelte';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import GameHeader from '../GameHeader.svelte';
-
-const { mockInstallPrompt } = vi.hoisted(() => ({
-	mockInstallPrompt: {
-		available: false,
-		promptInstall: vi.fn()
-	}
-}));
-
-vi.mock('../../stores/install.svelte.js', () => ({
-	installPrompt: mockInstallPrompt
-}));
-
-beforeEach(() => {
-	vi.clearAllMocks();
-	mockInstallPrompt.available = false;
-});
 
 afterEach(() => {
 	cleanup();
@@ -25,7 +9,9 @@ afterEach(() => {
 describe('GameHeader', () => {
 	it('toggles sound when mute button is clicked', async () => {
 		const toggleMute = vi.fn();
+		const onShake = vi.fn();
 		const gameState = {
+			status: 'playing',
 			audioManager: {
 				isMuted: false,
 				toggleMute
@@ -33,7 +19,7 @@ describe('GameHeader', () => {
 		} as any;
 
 		const { getByRole } = render(GameHeader, {
-			props: { gameState }
+			props: { gameState, onShake }
 		});
 
 		const toggleBtn = getByRole('button', { name: 'Toggle Sound' });
@@ -42,39 +28,29 @@ describe('GameHeader', () => {
 		expect(toggleMute).toHaveBeenCalled();
 	});
 
-	it('pauses game and opens IntroductionModal on About click', async () => {
-		const setStatus = vi.fn();
+	it('shakes the container when the shake button is clicked', async () => {
+		const onShake = vi.fn();
 		const gameState = {
 			status: 'playing',
-			setStatus,
-			audioManager: { isMuted: false }
+			audioManager: { isMuted: false, toggleMute: vi.fn() }
 		} as any;
+		const { getByRole } = render(GameHeader, { props: { gameState, onShake } });
 
-		const { getByRole } = render(GameHeader, {
-			props: { gameState }
-		});
+		await fireEvent.click(getByRole('button', { name: 'Shake container' }));
 
-		const aboutBtn = getByRole('button', { name: 'About' });
-		await fireEvent.click(aboutBtn);
-
-		expect(setStatus).toHaveBeenCalledWith('paused');
+		expect(onShake).toHaveBeenCalledOnce();
 	});
 
-	it('renders install button and triggers install when available', async () => {
-		mockInstallPrompt.available = true;
-		mockInstallPrompt.promptInstall = vi.fn();
-
+	it('shows the Fruity Jibesh title without online controls', () => {
 		const gameState = {
-			audioManager: { isMuted: false }
+			status: 'playing',
+			audioManager: { isMuted: false, toggleMute: vi.fn() }
 		} as any;
-
-		const { getByRole } = render(GameHeader, {
-			props: { gameState }
+		const { getByText, queryByRole } = render(GameHeader, {
+			props: { gameState, onShake: vi.fn() }
 		});
 
-		const installBtn = getByRole('button', { name: '📲 Install App' });
-		await fireEvent.click(installBtn);
-
-		expect(mockInstallPrompt.promptInstall).toHaveBeenCalled();
+		expect(getByText(/Fruity Jibesh/)).not.toBeNull();
+		expect(queryByRole('button', { name: 'About' })).toBeNull();
 	});
 });

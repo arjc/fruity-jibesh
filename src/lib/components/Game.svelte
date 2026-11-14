@@ -1,49 +1,45 @@
 <script lang="ts">
-import { onMount, setContext } from 'svelte';
-import { fade, scale } from 'svelte/transition';
+import { onMount } from 'svelte';
 import { expoOut } from 'svelte/easing';
-
-import { GameState } from '../stores/game.svelte.js';
+import { fade, scale } from 'svelte/transition';
+import DebugMenu from '../components/DebugMenu.svelte';
+// Import Constants and Types
+import {
+	DEFAULT_IMAGES_PATH,
+	DEFAULT_SOUNDS_PATH,
+	FRUITS,
+	GAME_HEIGHT,
+	GAME_OVER_HEIGHT,
+	GAME_WIDTH,
+	GAME_WIDTH_PX,
+	GAMEPLAY_TUNING
+} from '../constants';
+import { useBoundingRect } from '../hooks/useBoundingRect.svelte';
+import { useCursorPosition } from '../hooks/useCursorPosition.svelte';
+import Apple from '../images/fruits/apple.png?url';
+import Blueberry from '../images/fruits/blueberry.png?url';
+import Dragonfruit from '../images/fruits/dragonfruit.png?url';
+import Grape from '../images/fruits/grape.png?url';
+import Honeydew from '../images/fruits/honeydew.png?url';
+import Lemon from '../images/fruits/lemon.png?url';
+import Orange from '../images/fruits/orange.png?url';
+import Peach from '../images/fruits/peach.png?url';
+import Pear from '../images/fruits/pear.png?url';
+import Pineapple from '../images/fruits/pineapple.png?url';
+import Watermelon from '../images/fruits/watermelon.png?url';
 import { saveScore } from '../stores/db';
-
+import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
+import { GameState } from '../stores/game.svelte.js';
 // Import Utilities
 import { clamp } from '../utils/clamp';
-import { useCursorPosition } from '../hooks/useCursorPosition.svelte';
-import { useBoundingRect } from '../hooks/useBoundingRect.svelte';
-
 // Import Components
 import Fruit from './Fruit.svelte';
 import GameEntity from './GameEntity.svelte';
-import GameSidebar from './GameSidebar.svelte';
 import GameHeader from './GameHeader.svelte';
 import GameOverModal from './GameOverModal.svelte';
-import DebugMenu from '../components/DebugMenu.svelte';
+import GameSidebar from './GameSidebar.svelte';
 
-// Import SVG fruit assets
-import Blueberry from '../svg/blueberry.svg?url';
-import Grape from '../svg/grape.svg?url';
-import Lemon from '../svg/lemon.svg?url';
-import Orange from '../svg/orange.svg?url';
-import Apple from '../svg/apple.svg?url';
-import Dragonfruit from '../svg/dragonfruit.svg?url';
-import Pear from '../svg/pear.svg?url';
-import Peach from '../svg/peach.svg?url';
-import Pineapple from '../svg/pineapple.svg?url';
-import Honeydew from '../svg/honeydew.svg?url';
-import Watermelon from '../svg/watermelon.svg?url';
-
-// Import Constants and Types
-import {
-	GAME_WIDTH,
-	GAME_WIDTH_PX,
-	GAME_OVER_HEIGHT,
-	GAME_HEIGHT,
-	FRUITS,
-	DEFAULT_IMAGES_PATH,
-	DEFAULT_SOUNDS_PATH
-} from '../constants';
-
-const fruitSvgs: Record<string, string> = {
+const fruitImageUrls: Record<string, string> = {
 	blueberry: Blueberry,
 	grape: Grape,
 	lemon: Lemon,
@@ -65,6 +61,10 @@ const gameState = new GameState({
 	soundsPath
 });
 let showDebugMenu = $state(false);
+const MOTION_SHAKE_THRESHOLD = 15;
+const GRAVITY_SHAKE_THRESHOLD = 12;
+const MOTION_SHAKE_COOLDOWN_MS = 1000;
+let motionPermissionRequested = false;
 
 // Find game area width and cursor position
 let gameRef = $state<HTMLElement | null>(null);
@@ -74,6 +74,7 @@ let cursorPosition = useCursorPosition();
 
 const spriteCache: HTMLCanvasElement[] = [];
 const fruitImages: HTMLImageElement[] = [];
+const loadedImageSources: string[] = [];
 let imagesLoaded = $state(false);
 let canvasCtx: CanvasRenderingContext2D | null = null;
 // Resolved from --color-border-light once mounted; default matches the CSS token.
@@ -248,30 +249,6 @@ function renderCanvas() {
 	}
 }
 
-function generateScreenshot(): string {
-	if (!gameRef || !canvasRef) {
-		throw new Error('Could not find the gameplay area to screenshot.');
-	}
-
-	// The game canvas holds every visible element at game-over (fruits, merge effects,
-	// danger ring) but is transparent elsewhere, so composite it over the gameplay-area
-	// background rather than snapshotting the whole DOM.
-	const output = document.createElement('canvas');
-	output.width = canvasRef.width;
-	output.height = canvasRef.height;
-
-	const ctx = output.getContext('2d');
-	if (!ctx) {
-		throw new Error('Failed to generate screenshot: could not acquire a canvas context.');
-	}
-
-	ctx.fillStyle = getComputedStyle(gameRef).backgroundColor || 'hsl(0, 0%, 90%)';
-	ctx.fillRect(0, 0, output.width, output.height);
-	ctx.drawImage(canvasRef, 0, 0);
-
-	return output.toDataURL('image/png');
-}
-
 onMount(() => {
 	const urlParams = new URLSearchParams(window.location.search);
 	const isDebugQuery = urlParams.get('debug') === 'true';
@@ -312,24 +289,74 @@ onMount(() => {
 		}
 	}
 
+	let previousGravity: { x: number; y: number; z: number } | undefined;
+	let lastMotionShakeAt = Number.NEGATIVE_INFINITY;
+	function handleDeviceMotion(event: DeviceMotionEvent) {
+		if (gameState.status !== 'playing') return;
+
+		const acceleration = event.acceleration;
+		if (
+			acceleration &&
+			typeof acceleration.x === 'number' &&
+			typeof acceleration.y === 'number' &&
+			typeof acceleration.z === 'number'
+		) {
+			if (Math.hypot(acceleration.x, acceleration.y, acceleration.z) < MOTION_SHAKE_THRESHOLD) {
+				return;
+			}
+		} else {
+			const gravity = event.accelerationIncludingGravity;
+			if (
+				!gravity ||
+				typeof gravity.x !== 'number' ||
+				typeof gravity.y !== 'number' ||
+				typeof gravity.z !== 'number'
+			) {
+				return;
+			}
+
+			const currentGravity = { x: gravity.x, y: gravity.y, z: gravity.z };
+			const delta = previousGravity
+				? Math.hypot(
+						currentGravity.x - previousGravity.x,
+						currentGravity.y - previousGravity.y,
+						currentGravity.z - previousGravity.z
+					)
+				: 0;
+			previousGravity = currentGravity;
+			if (delta < GRAVITY_SHAKE_THRESHOLD) return;
+		}
+
+		const now = Date.now();
+		if (now - lastMotionShakeAt < MOTION_SHAKE_COOLDOWN_MS) return;
+		lastMotionShakeAt = now;
+		shakeContainer();
+	}
+
 	window.addEventListener('beforeunload', handleBeforeUnload);
 	document.addEventListener('visibilitychange', handleVisibilityChange);
+	window.addEventListener('devicemotion', handleDeviceMotion);
 
-	// Load SVG fruit assets
+	// Load PNG fruit assets
 	const loadPromises = FRUITS.map((fruit, index) => {
-		const src = fruitSvgs[fruit.name];
+		const src = fruitImageOverrides[fruit.name] ?? fruitImageUrls[fruit.name];
 		if (!src) {
 			return Promise.resolve();
 		}
+		loadedImageSources[index] = src;
 		return new Promise<void>((resolve) => {
 			const img = new Image();
 			img.src = src;
 			img.onload = () => {
+				if ((fruitImageOverrides[fruit.name] ?? fruitImageUrls[fruit.name]) !== src) {
+					resolve();
+					return;
+				}
 				fruitImages[index] = img;
 				resolve();
 			};
 			img.onerror = () => {
-				console.warn(`Failed to load SVG for ${fruit.name}`);
+				console.warn(`Failed to load PNG for ${fruit.name}`);
 				resolve();
 			};
 		});
@@ -348,6 +375,7 @@ onMount(() => {
 	return function onUnmount() {
 		window.removeEventListener('beforeunload', handleBeforeUnload);
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
+		window.removeEventListener('devicemotion', handleDeviceMotion);
 		gameState.destroy();
 		gameState.onUpdate = undefined;
 	};
@@ -376,6 +404,28 @@ $effect(() => {
 	if (imagesLoaded) {
 		updateSpriteCache();
 	}
+});
+
+$effect(() => {
+	if (!imagesLoaded) return;
+
+	FRUITS.forEach((fruit, index) => {
+		const src = fruitImageOverrides[fruit.name] ?? fruitImageUrls[fruit.name];
+		if (!src || loadedImageSources[index] === src) return;
+
+		loadedImageSources[index] = src;
+		const img = new Image();
+		img.onload = () => {
+			if ((fruitImageOverrides[fruit.name] ?? fruitImageUrls[fruit.name]) !== src) return;
+			fruitImages[index] = img;
+			updateSpriteCache();
+			renderCanvas();
+		};
+		img.onerror = () => {
+			console.error(`Failed to load custom image for ${fruit.name}`);
+		};
+		img.src = src;
+	});
 });
 
 $effect(() => {
@@ -466,10 +516,59 @@ function handleGameOverClose() {
 	gameState.restartGame();
 }
 
-// Set context for child components to consume
-setContext('imagesPath', imagesPath);
-setContext('soundsPath', soundsPath);
-setContext('generateScreenshot', generateScreenshot);
+function shakeContainer(): void {
+	if (!gameRef || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+	gameState.shakeContainer();
+	const { animationDistancePx, animationRotationDeg, animationSettleFactor } =
+		GAMEPLAY_TUNING.shake;
+	gameRef.animate(
+		[
+			{ transform: 'translateX(0) rotate(0)' },
+			{
+				transform: `translateX(${-animationDistancePx}px) rotate(${-animationRotationDeg}deg)`
+			},
+			{
+				transform: `translateX(${animationDistancePx}px) rotate(${animationRotationDeg}deg)`
+			},
+			{
+				transform: `translateX(${-animationDistancePx * animationSettleFactor}px) rotate(${-animationRotationDeg * animationSettleFactor}deg)`
+			},
+			{
+				transform: `translateX(${animationDistancePx * animationSettleFactor}px) rotate(${animationRotationDeg * animationSettleFactor}deg)`
+			},
+			{ transform: 'translateX(0) rotate(0)' }
+		],
+		{ duration: GAMEPLAY_TUNING.shake.animationDurationMs, easing: 'ease-in-out' }
+	);
+}
+
+function requestDeviceMotionPermission(): void {
+	const motionApi = window.DeviceMotionEvent as
+		| (typeof DeviceMotionEvent & {
+				requestPermission?: () => Promise<'granted' | 'denied'>;
+		  })
+		| undefined;
+	if (!motionApi?.requestPermission || motionPermissionRequested) return;
+
+	motionPermissionRequested = true;
+	void motionApi
+		.requestPermission()
+		.then((permission) => {
+			if (permission !== 'granted') {
+				console.warn('Device motion permission was not granted');
+			}
+		})
+		.catch((error: unknown) => {
+			motionPermissionRequested = false;
+			console.warn('Unable to request device motion permission:', error);
+		});
+}
+
+function handleShakeButton(): void {
+	requestDeviceMotionPermission();
+	shakeContainer();
+}
 </script>
 
 <!--
@@ -483,61 +582,71 @@ setContext('generateScreenshot', generateScreenshot);
 <div class="game-container">
   <div
     class="game responsive-font-size"
+    class:start-screen-active={gameState.status === 'uninitialized'}
     role="application"
     aria-label="Fruit merging game area"
     tabindex="0"
   >
-    <div class="header"><GameHeader {gameState} /></div>
-    <div class="sidebar"><GameSidebar {gameState} /></div>
+    {#if gameState.status === 'uninitialized'}
+      <section class="start-screen" aria-labelledby="game-title">
+        <h1 id="game-title">Fruity Jibesh</h1>
+        <button onclick={() => gameState.setStatus('playing')}>Start Game</button>
+      </section>
+    {:else}
+      <div class="header"><GameHeader {gameState} onShake={handleShakeButton} /></div>
+      <div class="sidebar"><GameSidebar {gameState} /></div>
 
-    <!-- Game Container -->
-    <div
-      class="gameplay-area"
-      bind:this={gameRef}
-      onpointerup={handleClick}
-      onkeydown={handleKeyDown}
-      aria-hidden="true"
-      use:gameBoundingRect.action
-      use:cursorPosition.action={gameBoundingRect.rect}
-    >
-      <!-- aria-hidden because the wrapper handles interaction -->
+      <div
+        class="gameplay-area"
+        bind:this={gameRef}
+        onpointerup={handleClick}
+        onkeydown={handleKeyDown}
+        aria-hidden="true"
+        use:gameBoundingRect.action
+        use:cursorPosition.action={gameBoundingRect.rect}
+      >
+        <canvas bind:this={canvasRef} class="gameplay-canvas"></canvas>
 
-      <canvas bind:this={canvasRef} class="gameplay-canvas"></canvas>
+        {#if gameState.status !== "gameover"}
+          <div class="drop-line" style:translate="{clampedMouseX - 1}px 0" out:fade={{ duration: 200 }}></div>
+        {/if}
 
-      {#if gameState.status !== "gameover"}
-        <div class="drop-line" style:translate="{clampedMouseX - 1}px 0" out:fade={{ duration: 200 }}></div>
-      {/if}
+        {#if gameState.status !== "gameover" && !isDropping && currentFruit}
+          <div
+            class="preview-fruit"
+            aria-hidden="true"
+            style:translate="{clampedMouseX}px 0"
+          >
+            <GameEntity x={0} y={GAME_OVER_HEIGHT / 2} scale={gameScale}>
+              <div
+                class="preview-fruit-wrapper"
+                in:scale={{ opacity: 1, easing: expoOut, duration: 250 }}
+              >
+                <Fruit
+                  {...currentFruit}
+                  radius={currentFruit.radius}
+                  scale={gameScale}
+                />
+              </div>
+            </GameEntity>
+          </div>
+        {/if}
+      </div>
 
-      <!-- Preview fruit - Appears when not dropping -->
-      {#if gameState.status !== "gameover" && !isDropping && currentFruit}
-        <!-- aria-hidden as it's purely visual feedback -->
-        <div
-          class="preview-fruit"
-          aria-hidden="true"
-          style:translate="{clampedMouseX}px 0"
-        >
-          <GameEntity x={0} y={GAME_OVER_HEIGHT / 2} scale={gameScale}>
-            <div
-              class="preview-fruit-wrapper"
-              in:scale={{ opacity: 1, easing: expoOut, duration: 250 }}
-            >
-              <Fruit
-                {...currentFruit}
-                radius={currentFruit.radius}
-                scale={gameScale}
-              />
-            </div>
-          </GameEntity>
+      <GameOverModal
+        open={showGameOverModal}
+        score={gameState.score}
+        onClose={handleGameOverClose}
+      />
+
+      {#if gameState.mergeNotices.length > 0}
+        <div class="merge-notices" aria-live="polite" aria-atomic="false">
+          {#each gameState.mergeNotices as notice (notice.id)}
+            <div class="merge-notice" role="status">{notice.message}</div>
+          {/each}
         </div>
       {/if}
-    </div>
-
-    <GameOverModal
-      {gameState}
-      open={showGameOverModal}
-      score={gameState.score}
-      onClose={handleGameOverClose}
-    />
+    {/if}
   </div>
 
   {#if showDebugMenu}
@@ -592,15 +701,15 @@ setContext('generateScreenshot', generateScreenshot);
   }
 
   .game {
-    --color-border: hsla(0, 0%, 0%, 0.1);
-    --color-border-light: hsla(0, 0%, 0%, 0.075);
-    --color-focus-outline: rgb(2, 191, 96);
-    --color-background: hsl(0, 0%, 95%);
-    --color-background-light: hsl(0, 0%, 99%);
-    --color-background-dark: hsl(0, 0%, 90%);
-    --color-text: hsl(0, 0%, 20%);
-    --color-light-text: hsl(0, 0%, 35%);
-    --color-very-light-text: hsl(0, 0%, 50%);
+    --color-border: rgba(59, 28, 110, 0.18);
+    --color-border-light: rgba(59, 28, 110, 0.12);
+    --color-focus-outline: rgb(59, 28, 110);
+    --color-background: #e8dfef;
+    --color-background-light: #f7e0e8;
+    --color-background-dark: #f1e9b5;
+    --color-text: #3b1c6e;
+    --color-light-text: #644978;
+    --color-very-light-text: #907d95;
 
     --color-blueberry: hsl(233, 100%, 69.8%);
     --color-grape: hsl(86.3, 48.6%, 49.6%);
@@ -626,12 +735,12 @@ setContext('generateScreenshot', generateScreenshot);
     user-select: none; /* Prevent text selection */
     touch-action: none; /* Prevent default touch actions like scrolling */
     outline: none; /* Remove default focus outline if desired, but ensure custom focus style */
-    background: var(--color-background);
+    background: linear-gradient(180deg, #e7def0 0%, #f6dbe4 55%, #f4edbd 100%);
     color: var(--color-text);
     border: 1px solid var(--color-border);
     border-radius: var(--border-radius);
 
-    font-family: Geist, Inter, sans-serif;
+    font-family: Inter, system-ui, sans-serif;
     font-optical-sizing: auto;
     font-style: normal;
     font-weight: 400;
@@ -640,6 +749,92 @@ setContext('generateScreenshot', generateScreenshot);
     @media (aspect-ratio < 0.65) {
       grid-template-columns: 1fr;
       grid-template-areas: "sidebar" "gameplay" "header";
+    }
+
+    .start-screen {
+      display: flex;
+      min-height: min(80svh, 700px);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5em;
+      color: white;
+    }
+
+    &.start-screen-active {
+      display: flex;
+      justify-content: center;
+      border: 0;
+      background: transparent;
+    }
+
+    .start-screen h1 {
+      margin: 0;
+      font-size: clamp(3rem, 12vw, 6rem);
+      font-weight: 750;
+      letter-spacing: -0.06em;
+    }
+
+    .start-screen button {
+      padding: 0.8em 1.6em;
+      border: 0;
+      border-radius: 999px;
+      background: var(--color-background-light);
+      color: #3b1c6e;
+      font: inherit;
+      font-size: 1.2em;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .merge-notices {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      pointer-events: none;
+    }
+
+    .merge-notice {
+      padding: 0.2em 0.6em;
+      color: #3b1c6e;
+      font-family: "Brush Script MT", "Comic Sans MS", cursive;
+      font-size: clamp(2.5rem, 8vw, 5rem);
+      font-weight: 700;
+      line-height: 1.1;
+      text-align: center;
+      text-shadow:
+        0 2px 0 #f7e0e8,
+        0 5px 12px rgb(34 14 49 / 35%);
+      animation: merge-found 3s ease-in-out both;
+    }
+
+    @keyframes merge-found {
+      0% {
+        opacity: 0;
+        transform: translateY(0.5em) scale(0.75) rotate(-5deg);
+      }
+
+      12%,
+      78% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translateY(-0.4em) scale(0.95);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .merge-notice {
+        animation: none;
+      }
     }
 
     :global(*) {
@@ -672,7 +867,7 @@ setContext('generateScreenshot', generateScreenshot);
       box-shadow:
         0px 0px 0px 1px rgba(0, 0, 0, 0.125),
         0px 0px 0px 1px rgba(0, 0, 0, 0.1),
-        inset 0px 1px 0px 0px rgba(255, 255, 255, 0.95);
+        inset 0px 1px 0px 0px rgba(255, 255, 255, 0.28);
       cursor: pointer;
       transition:
         background-color 250ms,
@@ -685,7 +880,7 @@ setContext('generateScreenshot', generateScreenshot);
         box-shadow:
           0px 2px 0px 1px rgba(0, 0, 0, 0.125),
           0px 0px 0px 1px rgba(0, 0, 0, 0.1),
-          inset 0px 1px 0px 0px rgba(255, 255, 255, 0.95);
+          inset 0px 1px 0px 0px rgba(255, 255, 255, 0.28);
         transition:
           background-color 100ms,
           box-shadow 100ms,
@@ -698,12 +893,12 @@ setContext('generateScreenshot', generateScreenshot);
         box-shadow:
           0px 0px 0px 1px rgba(0, 0, 0, 0.125),
           0px 0px 0px 1px rgba(0, 0, 0, 0.1),
-          inset 0px 1px 0px 0px rgba(255, 255, 255, 0.95);
+          inset 0px 1px 0px 0px rgba(255, 255, 255, 0.28);
       }
     }
 
     :global(var) {
-      font-family: Geist, monospace;
+      font-family: ui-monospace, monospace;
       font-variant-numeric: tabular-nums;
       font-optical-sizing: auto;
       font-style: normal;
@@ -722,7 +917,7 @@ setContext('generateScreenshot', generateScreenshot);
     aspect-ratio: 2 / 3;
     position: relative;
     box-shadow: inset hsla(0, 0%, 0%, 0.2) 0 2px 2px;
-    background-color: var(--color-background-dark);
+    background: linear-gradient(180deg, #ddd2e9 0%, #f1c7d6 55%, #eee39a 100%);
     border-radius: 1em;
     cursor: s-resize;
 

@@ -1,20 +1,20 @@
 <script lang="ts">
 import { GAME_WIDTH, GAME_WIDTH_PX } from '../constants';
+import Apple from '../images/fruits/apple.png?url';
+import Blueberry from '../images/fruits/blueberry.png?url';
+import Dragonfruit from '../images/fruits/dragonfruit.png?url';
+import Grape from '../images/fruits/grape.png?url';
+import Honeydew from '../images/fruits/honeydew.png?url';
+import Lemon from '../images/fruits/lemon.png?url';
+import Orange from '../images/fruits/orange.png?url';
+import Peach from '../images/fruits/peach.png?url';
+import Pear from '../images/fruits/pear.png?url';
+import Pineapple from '../images/fruits/pineapple.png?url';
+import Watermelon from '../images/fruits/watermelon.png?url';
+import { getFruitDisplayName } from '../stores/fruitCustomizations.svelte';
+import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 
-// Import all fruit manually as static asset paths
-import Blueberry from '$lib/svg/blueberry.svg?url';
-import Grape from '$lib/svg/grape.svg?url';
-import Lemon from '$lib/svg/lemon.svg?url';
-import Orange from '$lib/svg/orange.svg?url';
-import Apple from '$lib/svg/apple.svg?url';
-import Dragonfruit from '$lib/svg/dragonfruit.svg?url';
-import Pear from '$lib/svg/pear.svg?url';
-import Peach from '$lib/svg/peach.svg?url';
-import Pineapple from '$lib/svg/pineapple.svg?url';
-import Honeydew from '$lib/svg/honeydew.svg?url';
-import Watermelon from '$lib/svg/watermelon.svg?url';
-
-const fruitSvgs: Record<string, string> = {
+const fruitImages: Record<string, string> = {
 	Blueberry,
 	Grape,
 	Lemon,
@@ -48,8 +48,9 @@ const width = $derived.by(() => {
 const FruitComponent = $derived.by(() => {
 	const fruitKey = `${name.at(0).toUpperCase()}${name.slice(1)}`;
 	if (!fruitKey) return '';
-	return fruitSvgs[fruitKey] || '';
+	return fruitImageOverrides[name] ?? fruitImages[fruitKey] ?? '';
 });
+const displayName = $derived(getFruitDisplayName(name));
 </script>
 
 <div
@@ -60,7 +61,7 @@ const FruitComponent = $derived.by(() => {
   style:display={display === "inline" ? "inline-block" : display}
 >
   {#if FruitComponent}
-    <img src={FruitComponent} alt={name} style="display: block; width: 100%; height: 100%;" />
+    <img src={FruitComponent} alt={displayName} style="display: block; width: 100%; height: 100%;" />
   {/if}
 </div>
 

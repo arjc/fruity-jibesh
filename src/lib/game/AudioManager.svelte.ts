@@ -24,6 +24,7 @@ export class AudioManager {
 	private soundPools: Record<string, Howl[]> = {};
 	private poolIndices: Record<string, number> = {};
 	private soundCooldowns: Record<string, number> = {}; // Tracks last play time
+	private customSounds = new Map<string, { blob: Blob; url: string; sound: Howl }>();
 	private poolSize: number;
 	isMuted: boolean = $state((Howler as unknown as { _muted: boolean })?._muted ?? false);
 
@@ -162,6 +163,60 @@ export class AudioManager {
 			// Sound is on cooldown
 			return null;
 		}
+	}
+
+	public playCustomSound(name: string, blob: Blob, options?: PlayOptions): number | null {
+		if (!this.isAudioContextReady) {
+			console.warn(
+				`Cannot play custom sound "${name}" - Audio Context not ready. Ensure audio is initialized after user interaction.`
+			);
+			Howler.ctx?.resume();
+			return null;
+		}
+
+		try {
+			let customSound = this.customSounds.get(name);
+			if (customSound?.blob !== blob) {
+				if (customSound) {
+					customSound.sound.unload();
+					URL.revokeObjectURL(customSound.url);
+				}
+
+				const url = URL.createObjectURL(blob);
+				const sound = new Howl({
+					src: [url],
+					format: ['mp3'],
+					volume: 0.8,
+					preload: true,
+					pool: this.poolSize,
+					onloaderror: (_id, error) => {
+						console.error(`Failed to load custom sound "${name}":`, error);
+					}
+				});
+				customSound = { blob, url, sound };
+				this.customSounds.set(name, customSound);
+			}
+
+			const soundId = customSound.sound.play();
+			if (options?.volume !== undefined) {
+				customSound.sound.volume(options.volume, soundId);
+			}
+			if (options?.rate !== undefined) {
+				customSound.sound.rate(options.rate, soundId);
+			}
+			return soundId;
+		} catch (error) {
+			console.error(`Error playing custom sound "${name}":`, error);
+			return null;
+		}
+	}
+
+	public destroy(): void {
+		for (const { sound, url } of this.customSounds.values()) {
+			sound.unload();
+			URL.revokeObjectURL(url);
+		}
+		this.customSounds.clear();
 	}
 
 	public toggleMute(): void {

@@ -1,14 +1,14 @@
-# Subak Game 🍉
+# Fruity Jibesh 🍉
 
 <img
   src="static/opengraph.png"
-  alt="Subak Game with a pile of fruit"
+  alt="Fruity Jibesh with a pile of fruit"
   width="600"
 />
 
 A browser-based fruit-merging puzzle game inspired by [Suika Game](https://www.nintendo.com/us/store/products/suika-game-switch/). Drop fruits into a container — when two identical fruits touch, they merge into the next fruit in the evolution chain. Combine your way up through **11 fruits** (blueberry → grape → lemon → orange → apple → dragonfruit → pear → peach → pineapple → honeydew → watermelon) and chase the highest score.
 
-The original game, "Merge Big Watermelon" (合成大西瓜), was created by Meadow Science (米兜科技). This project was built as a fun memento of a team off-site where I accidentally got my entire team hooked on Suika Game. "Subak" (수박) is Korean for watermelon.
+The original game, "Merge Big Watermelon" (合成大西瓜), was created by Meadow Science (米兜科技). This project was built as a fun memento of a team off-site where I accidentally got my entire team hooked on Suika Game. It was originally called "Subak" (수박), Korean for watermelon.
 
 **Play it live → [subak.kempf.dev](https://subak.kempf.dev)**
 
@@ -18,16 +18,16 @@ The original game, "Merge Big Watermelon" (合成大西瓜), was created by Mead
 
 <img
   src="static/images/subak-game-screenshot.png"
-  alt="Subak Game gameplay screenshot showing many fruit in the gameplay area"
+  alt="Fruity Jibesh gameplay screenshot showing many fruit in the gameplay area"
   width="420"
 />
 
 - **Drop** a fruit anywhere along the top of the container.
 - **Merge** — when two identical fruits collide, they fuse into the next-larger fruit and award points.
 - **Game over** when any fruit breaches the danger line at the top.
-- **Offline Support** — fully playable without network; game pages and assets (including physics WASM and audio) are cached via a service worker.
-- **Installable PWA** — can be installed as a standalone application on mobile and desktop devices, featuring a custom in-game install prompt on supported Chromium browsers and native home-screen launch support.
-- **Leaderboard** — scores are saved locally (IndexedDB) and submitted to the global leaderboard. When offline, submissions are safely queued locally and automatically flushed once connectivity is restored.
+- **Offline Support** — no backend or analytics requests; game pages and assets (including physics WASM and audio) are cached via a service worker.
+- **Local high scores** — scores are saved on your device with IndexedDB.
+- **Installable PWA** — can be installed as a standalone application on mobile and desktop devices.
 
 ---
 
@@ -45,9 +45,7 @@ The project serves two roles:
 ```
 src/
 ├── lib/
-│   ├── api/                  # LeaderboardClient — reactive Svelte 5 class managing
-│   │                         #   session tokens, score submission, and global score fetching
-│   ├── components/           # UI layer (Game, Leaderboard, modals, merge effects, etc.)
+│   ├── components/           # UI layer (game, start screen, score modal, merge effects)
 │   ├── game/                 # Physics-layer classes
 │   │   ├── Fruit.ts          #   Fruit rigid-body wrapper (Rapier colliders, merging)
 │   │   ├── Boundary.ts       #   Wall / floor collider creation
@@ -57,11 +55,9 @@ src/
 │   │   ├── game.svelte.ts    #   Core GameState class — physics loop, collision detection,
 │   │   │                     #   score tracking, fruit spawning, game-over logic
 │   │   ├── db.ts             #   Local high-score persistence (Dexie / IndexedDB)
-│   │   └── telemetry.svelte.ts  #   Session telemetry & anti-cheat payload builder
-│   ├── icons/ & svg/         # Inline SVG fruit sprites and UI icons
+│   ├── icons/ & images/      # UI icons and local fruit PNGs
 │   └── types/                # Shared TypeScript interfaces
 ├── routes/                   # SvelteKit page entry point
-└── utils/                    # Web analytics (PostHog) initializer
 ```
 
 ---
@@ -74,8 +70,6 @@ src/
 | **Physics** | [Rapier (rapier2d-compat)](https://rapier.rs) | WASM-powered 2D rigid-body simulation with deterministic collision events |
 | **Audio** | [Howler](https://howlerjs.com) | Cross-browser sound playback with volume and pitch control |
 | **Local storage** | [Dexie](https://dexie.org) | Ergonomic IndexedDB wrapper for persisting local high scores |
-| **Screenshots** | [modern-screenshot](https://github.com/nicepkg/modern-screenshot) | DOM-to-image capture for sharing game-over screens |
-| **Telemetry** | [PostHog](https://posthog.com) | Optional web analytics |
 | **Build** | [Vite](https://vite.dev) + [SvelteKit](https://svelte.dev/docs/kit) | Fast HMR, SSG via `adapter-static`, library mode via `svelte-package` |
 | **Linting** | [Biome](https://biomejs.dev) | Formatting and linting in a single tool |
 | **Testing** | [Vitest](https://vitest.dev) (browser mode) + [Playwright](https://playwright.dev) | Real-browser test execution with `@testing-library/svelte` |
@@ -100,22 +94,7 @@ cd subak-game
 npm install
 ```
 
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `VITE_APP_VERSION` | Injected build version | `$npm_package_version` |
-| `VITE_POSTHOG_TOKEN` | PostHog analytics token (optional) | — |
-| `PUBLIC_SHARED_CLIENT_SALT` | Shared salt for anti-cheat hash | `"public_secret_hash_salt"` |
-| `PUBLIC_LEADERBOARD_URL` | Leaderboard API base URL | `http://localhost:3001` |
-
-> **Leaderboard is optional.** The game runs fully offline — the leaderboard client gracefully handles missing or unavailable servers.
-
-### 3. Run the dev server
+### 2. Run the dev server
 
 ```bash
 npm run dev
@@ -182,12 +161,6 @@ Outputs the publishable Svelte component library to `dist/`. Consumers import th
 
 ---
 
-## Leaderboard Server
-
-The game connects to an optional companion leaderboard API ([`subak-leaderboard`](https://github.com/Fauntleroy/subak-leaderboard)) for global score tracking. Set `PUBLIC_LEADERBOARD_URL` in `.env` to point to a running instance. See the leaderboard repo for setup instructions.
-
----
-
 ## Project Structure
 
 ```
@@ -195,7 +168,6 @@ subak-game/
 ├── src/
 │   ├── lib/              # Core library — components, game engine, stores, hooks
 │   ├── routes/           # SvelteKit app entry point
-│   └── utils/            # Web analytics setup
 ├── static/               # Static assets (images, sounds, favicon)
 ├── design/               # Source design files (Affinity Designer)
 ├── docs/                 # Pre-built static site for GitHub Pages

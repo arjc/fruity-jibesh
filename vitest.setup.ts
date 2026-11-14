@@ -13,8 +13,8 @@ vi.mock('svelte/motion', () => ({
 
 // --- Mock database access ---------------------------------------------------
 const mockScores: { id: number; score: number; date: Date }[] = [];
-const mockPendingSubmissions: { id: number; payload: Record<string, unknown>; createdAt: Date }[] =
-	[];
+const mockFruitMergeSounds = new Map<string, Blob>();
+const mockFruitPresetSounds = new Map<string, Record<string, Blob>>();
 
 vi.mock('./src/lib/stores/db', () => ({
 	saveScore: vi.fn(async (score: number): Promise<void> => {
@@ -23,24 +23,24 @@ vi.mock('./src/lib/stores/db', () => ({
 	getHighScores: vi.fn(async (): Promise<{ id: number; score: number; date: Date }[]> => {
 		return [...mockScores].sort((a, b) => b.score - a.score).slice(0, 10);
 	}),
-	queueSubmission: vi.fn(async (payload: Record<string, unknown>): Promise<void> => {
-		mockPendingSubmissions.push({
-			id: mockPendingSubmissions.length + 1,
-			payload,
-			createdAt: new Date()
-		});
+	getFruitMergeSounds: vi.fn(
+		async (): Promise<Record<string, Blob>> => Object.fromEntries(mockFruitMergeSounds)
+	),
+	saveFruitMergeSound: vi.fn(async (fruitName: string, sound: Blob): Promise<void> => {
+		mockFruitMergeSounds.set(fruitName, sound);
 	}),
-	getPendingSubmissions: vi.fn(
-		async (): Promise<{ id: number; payload: Record<string, unknown>; createdAt: Date }[]> => {
-			return [...mockPendingSubmissions];
+	deleteFruitMergeSound: vi.fn(async (fruitName: string): Promise<void> => {
+		mockFruitMergeSounds.delete(fruitName);
+	}),
+	getFruitPresetSounds: vi.fn(
+		async (presetId: string): Promise<Record<string, Blob> | undefined> => {
+			return mockFruitPresetSounds.get(presetId);
 		}
 	),
-	deletePendingSubmission: vi.fn(async (id: number): Promise<void> => {
-		const index = mockPendingSubmissions.findIndex((s) => s.id === id);
-		if (index !== -1) {
-			mockPendingSubmissions.splice(index, 1);
+	saveFruitPresetSounds: vi.fn(
+		async (presetId: string, sounds: Record<string, Blob>): Promise<void> => {
+			mockFruitPresetSounds.set(presetId, sounds);
 		}
-	}),
-	__mockScores: mockScores,
-	__mockPendingSubmissions: mockPendingSubmissions
+	),
+	__mockScores: mockScores
 }));

@@ -7,7 +7,8 @@ import {
 	type World
 } from '@dimforge/rapier2d-compat'; // Or @dimforge/rapier3d
 
-import { FRUITS, GAME_OVER_HEIGHT } from '../constants';
+import { FRUITS, GAME_OVER_HEIGHT, GAMEPLAY_TUNING } from '../constants';
+import { FRUIT_HITBOXES } from './fruitHitboxes';
 
 interface FruitBodyUserData {
 	fruitInstance: Fruit;
@@ -47,18 +48,34 @@ export class Fruit {
 		this.prevY = y;
 		this.prevRotation = 0;
 
-		const bodyDesc = RigidBodyDesc.dynamic()
-			.setTranslation(x, y)
-			.setLinearDamping(0.2)
-			.setAngularDamping(0.4);
-		this.body = this.physicsWorld.createRigidBody(bodyDesc);
+		const hitbox = FRUIT_HITBOXES[this.name.toLowerCase()];
+		if (!hitbox) {
+			throw new Error(`Missing fruit hitbox for "${this.name}".`);
+		}
 
-		const colliderDesc = ColliderDesc.ball(this.radius)
+		const vertices = Float32Array.from(
+			hitbox.flatMap(([x, y]) => [
+				x * this.radius * GAMEPLAY_TUNING.fruitColliderScale,
+				y * this.radius * GAMEPLAY_TUNING.fruitColliderScale
+			])
+		);
+		const colliderShape = ColliderDesc.convexHull(vertices);
+		if (!colliderShape) {
+			throw new Error(`Could not create convex hitbox for "${this.name}".`);
+		}
+
+		const colliderDesc = colliderShape
 			.setRestitution(0.25)
 			.setFriction(0.35)
 			.setMass(0.1)
 			// *** Enable collision events for this collider ***
 			.setActiveEvents(ActiveEvents.COLLISION_EVENTS);
+
+		const bodyDesc = RigidBodyDesc.dynamic()
+			.setTranslation(x, y)
+			.setLinearDamping(0.2)
+			.setAngularDamping(0.4);
+		this.body = this.physicsWorld.createRigidBody(bodyDesc);
 		this.collider = this.physicsWorld.createCollider(colliderDesc, this.body);
 
 		// --- CRUCIAL STEP ---

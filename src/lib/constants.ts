@@ -4,6 +4,21 @@ export const GAME_WIDTH_PX = 600;
 export const WALL_THICKNESS = GAME_WIDTH / 20;
 export const GAME_OVER_HEIGHT = GAME_HEIGHT / 6; // Y position above which game ends
 
+// Adjust these values to tune shake strength, speed, and fruit merge radius.
+export const GAMEPLAY_TUNING = {
+	fruitColliderScale: 1.1,
+	shake: {
+		impulses: [0.05, -0.12, 0.12, -0.12, 0.05],
+		pulseIntervalMs: 110,
+		horizontalVariation: 0.001,
+		torqueImpulse: 0.0005,
+		animationDurationMs: 50,
+		animationDistancePx: 1,
+		animationRotationDeg: 0.01,
+		animationSettleFactor: 0.75
+	}
+} as const;
+
 const FRUIT_NAMES: string[] = [
 	'blueberry',
 	'grape',

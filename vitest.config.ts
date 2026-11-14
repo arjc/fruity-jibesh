@@ -1,15 +1,5 @@
-import { execSync } from 'node:child_process';
 import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig, type Plugin } from 'vitest/config';
-import pkg from './package.json';
-
-const buildHash = (() => {
-	try {
-		return execSync('git rev-parse --short HEAD').toString().trim();
-	} catch {
-		return 'test';
-	}
-})();
 
 /** Stub for *.svg?component and *.svg?url imports — sveltekit-svg is SvelteKit-only, not available in vitest */
 const svgComponentStub: Plugin = {
@@ -43,15 +33,7 @@ export default defineConfig({
 	],
 	resolve: {
 		mainFields: ['browser', 'module', 'main'],
-		conditions: ['browser'],
-		alias: {
-			// SvelteKit's $env/dynamic/public is not available in vitest; provide a stub
-			'$env/dynamic/public': new URL('./src/__mocks__/env.ts', import.meta.url).pathname
-		}
-	},
-	define: {
-		__APP_VERSION__: JSON.stringify(pkg.version),
-		__BUILD_HASH__: JSON.stringify(buildHash)
+		conditions: ['browser']
 	},
 	test: {
 		browser: {

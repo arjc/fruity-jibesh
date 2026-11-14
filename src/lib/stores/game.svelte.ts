@@ -1,19 +1,22 @@
 import type { EventQueue, World } from '@dimforge/rapier2d-compat';
-
 import {
 	DEFAULT_IMAGES_PATH,
 	DEFAULT_SOUNDS_PATH,
 	FRUITS, // Assuming FRUITS is typed like: { radius: number; points: number }[]
 	GAME_HEIGHT,
 	GAME_WIDTH,
+	GAMEPLAY_TUNING,
 	WALL_THICKNESS
 } from '../constants'; // Ensure constants are correctly typed in their file
 import { AudioManager } from '../game/AudioManager.svelte';
 import { Boundary } from '../game/Boundary';
 import { Fruit } from '../game/Fruit';
 import { throttle } from '../utils/throttle';
-import { LeaderboardClient } from '../api/leaderboard-client.svelte';
-import { TelemetryState } from './telemetry.svelte';
+import {
+	fruitMergeSounds,
+	getFruitDisplayName,
+	loadFruitMergeSounds
+} from './fruitCustomizations.svelte';
 
 // --- Constants for Volume Mapping ---
 const MIN_VELOCITY_FOR_SOUND = 0.2; // Ignore very gentle taps
@@ -31,6 +34,7 @@ const DROP_PITCH_RATES = [
 // Bonus awarded when two watermelons (the largest fruit) merge and vanish
 const WATERMELON_MERGE_POINTS = 100;
 const MERGE_EFFECT_DURATION_MS = 1000;
+const MERGE_NOTICE_DURATION_MS = 3000;
 
 // Helper function (as defined above)
 function mapRange(
@@ -52,6 +56,10 @@ interface MergeEffectData {
 	radius: number;
 	startTime: number;
 	duration: number;
+}
+interface MergeNotice {
+	id: number;
+	message: string;
 }
 interface FruitState {
 	id: number; // Add this line
@@ -79,14 +87,12 @@ export class GameState {
 	fruitsStateById: Map<number, FruitState> = new Map();
 	dropCount: number = $state(0);
 	mergeEffects: MergeEffectData[] = $state([]);
-
-	// Telemetry & API
-	telemetry: TelemetryState = new TelemetryState();
-	leaderboard: LeaderboardClient = new LeaderboardClient();
+	mergeNotices: MergeNotice[] = $state([]);
 
 	gameOverFruitId: number | null = $state(null);
 
 	mergeEffectIdCounter: number = 0;
+	private mergeNoticeIdCounter = 0;
 
 	physicsAccumulator: number = 0;
 	lastTime: number | null = null;
@@ -96,6 +102,8 @@ export class GameState {
 	physicsWorld: World | null = null;
 	eventQueue: EventQueue | null = null;
 	colliderMap: Map<number, Fruit | Boundary> = new Map();
+	private shakeTimeouts = new Set<ReturnType<typeof setTimeout>>();
+	private mergeNoticeTimeouts = new Map<number, ReturnType<typeof setTimeout>>();
 
 	// Configuration
 	imagesPath: string = DEFAULT_IMAGES_PATH;
@@ -113,9 +121,13 @@ export class GameState {
 	async init() {
 		const { soundsPath } = this;
 		this.audioManager = new AudioManager({ soundsPath });
+		try {
+			await loadFruitMergeSounds();
+		} catch (error) {
+			console.error('Failed to load custom merge sounds:', error);
+		}
 		await this.initPhysics();
 		this.resetGame();
-		this.startNewSession();
 	}
 
 	update() {
@@ -207,6 +219,8 @@ export class GameState {
 
 		const mergePairs: { fruitA: Fruit; fruitB: Fruit }[] = [];
 		const mergedHandlesThisStep = new Set<number>(); // Track handles involved in a merge *this step*
+		let mergeSoundRate: number | null = null;
+		let bumpSound: { volume: number; rate: number } | null = null;
 
 		this.eventQueue.drainCollisionEvents((handle1, handle2, started) => {
 			// Only process contacts that *started* in this step
@@ -219,20 +233,16 @@ export class GameState {
 			const collisionItemB = this.colliderMap.get(handle2);
 
 			if (collisionItemA?.body && collisionItemB?.body && this.audioManager) {
-				// Apply random pitch variation
-				const rate =
-					PITCH_VARIATION_MIN + Math.random() * (PITCH_VARIATION_MAX - PITCH_VARIATION_MIN);
-
-				// if it's two fruits they will always fire pop sound effect
 				if (
 					collisionItemA instanceof Fruit &&
 					collisionItemB instanceof Fruit &&
 					collisionItemA.fruitIndex === collisionItemB.fruitIndex
 				) {
-					const popRate = DROP_PITCH_RATES[collisionItemA.fruitIndex] ?? 1.0;
-					this.audioManager.playSound('pop', { volume: 1, rate: popRate });
-					// bump sounds have complex logic
+					mergeSoundRate ??= DROP_PITCH_RATES[collisionItemA.fruitIndex] ?? 1.0;
 				} else {
+					const rate =
+						PITCH_VARIATION_MIN + Math.random() * (PITCH_VARIATION_MAX - PITCH_VARIATION_MIN);
+
 					// Get velocities (use {x:0, y:0} for static bodies or null bodies)
 					const vel1 = collisionItemA.body.linvel() ?? { x: 0, y: 0 };
 					const vel2 = collisionItemB.body.linvel() ?? { x: 0, y: 0 };
@@ -266,8 +276,7 @@ export class GameState {
 							? (DROP_PITCH_RATES[dominantFruit.fruitIndex] ?? 1.0)
 							: rate;
 
-						// Play the sound using AudioManager
-						this.audioManager.playSound('bump', { volume, rate: bumpRate });
+						bumpSound ??= { volume, rate: bumpRate };
 					}
 				}
 			}
@@ -304,6 +313,22 @@ export class GameState {
 				mergedHandlesThisStep.add(handleB);
 			}
 		});
+
+		if (mergeSoundRate !== null) {
+			const mergeFruit = mergePairs[0]?.fruitA;
+			const mergeFruitName = mergeFruit ? FRUITS[mergeFruit.fruitIndex]?.name : undefined;
+			const customSound = mergeFruitName ? fruitMergeSounds[mergeFruitName] : undefined;
+			if (mergeFruitName && customSound) {
+				this.audioManager?.playCustomSound(mergeFruitName, customSound, {
+					volume: 1,
+					rate: mergeSoundRate
+				});
+			} else {
+				this.audioManager?.playSound('pop', { volume: 1, rate: mergeSoundRate });
+			}
+		} else if (bumpSound) {
+			this.audioManager?.playSound('bump', bumpSound);
+		}
 
 		// --- Step 2: Process Queued Merges ---
 		if (mergePairs.length > 0) {
@@ -367,7 +392,6 @@ export class GameState {
 
 		const points = nextFruitType ? nextFruitType.points || 0 : WATERMELON_MERGE_POINTS;
 		const effectRadius = nextFruitType ? nextFruitType.radius : fruitA.radius;
-		const milestoneIndex = nextFruitType ? nextIndex : fruitA.fruitIndex;
 
 		// Add merge visual effect
 		this.mergeEffects = [
@@ -387,8 +411,30 @@ export class GameState {
 			this.addFruit(nextIndex, midpoint.x, midpoint.y);
 		}
 
-		this.telemetry.trackMilestone(points, milestoneIndex, this.dropCount);
 		this.score += points;
+		this.addMergeNotice(nextFruitType?.name ?? FRUITS[fruitA.fruitIndex].name);
+	}
+
+	private addMergeNotice(fruitName: string): void {
+		const id = this.mergeNoticeIdCounter++;
+		this.mergeNotices = [
+			...this.mergeNotices.slice(-2),
+			{ id, message: `${getFruitDisplayName(fruitName)}!` }
+		];
+
+		const timeout = setTimeout(() => {
+			this.mergeNotices = this.mergeNotices.filter((notice) => notice.id !== id);
+			this.mergeNoticeTimeouts.delete(id);
+		}, MERGE_NOTICE_DURATION_MS);
+		this.mergeNoticeTimeouts.set(id, timeout);
+	}
+
+	private clearMergeNotices(): void {
+		for (const timeout of this.mergeNoticeTimeouts.values()) {
+			clearTimeout(timeout);
+		}
+		this.mergeNoticeTimeouts.clear();
+		this.mergeNotices = [];
 	}
 
 	/** Removes a fruit from the physics world and all bookkeeping (counterpart to addFruit) */
@@ -439,6 +485,34 @@ export class GameState {
 		this.dropCount += 1;
 	}
 
+	shakeContainer(): void {
+		if (!this.physicsWorld || this.status !== 'playing') return;
+
+		this.clearShakeTimeouts();
+		GAMEPLAY_TUNING.shake.impulses.forEach((impulseX, pulseIndex) => {
+			const timeout = setTimeout(() => {
+				this.shakeTimeouts.delete(timeout);
+				if (this.status !== 'playing') return;
+
+				this.fruits.forEach((fruit, fruitIndex) => {
+					if (!fruit.body.isValid()) return;
+
+					const spinDirection = fruitIndex % 2 === 0 ? 1 : -1;
+					const horizontalVariation = spinDirection * GAMEPLAY_TUNING.shake.horizontalVariation;
+					fruit.body.applyImpulse({ x: impulseX + horizontalVariation, y: 0 }, true);
+					fruit.body.applyTorqueImpulse(spinDirection * GAMEPLAY_TUNING.shake.torqueImpulse, true);
+				});
+			}, pulseIndex * GAMEPLAY_TUNING.shake.pulseIntervalMs);
+
+			this.shakeTimeouts.add(timeout);
+		});
+	}
+
+	private clearShakeTimeouts(): void {
+		this.shakeTimeouts.forEach(clearTimeout);
+		this.shakeTimeouts.clear();
+	}
+
 	checkGameOver(): void {
 		if (this.status === 'gameover') return;
 
@@ -453,6 +527,9 @@ export class GameState {
 
 	/** Resets the game state, physics world, and clears the map */
 	resetGame(): void {
+		this.clearShakeTimeouts();
+		this.clearMergeNotices();
+
 		if (this.physicsWorld) {
 			this.fruits.forEach((fruit) => {
 				fruit.destroy();
@@ -467,9 +544,6 @@ export class GameState {
 		this.lastTime = null;
 		this.mergeEffectIdCounter = 0;
 		this.dropCount = 0;
-		this.telemetry.reset();
-		this.leaderboard.reset();
-
 		this.gameOverFruitId = null;
 
 		// Reset Svelte fields directly
@@ -482,15 +556,7 @@ export class GameState {
 
 	restartGame(): void {
 		this.resetGame();
-		this.startNewSession();
 		this.setStatus('playing');
-	}
-
-	private startNewSession(): void {
-		this.leaderboard.startSession().finally((): void => {
-			const token = this.leaderboard.sessionToken;
-			this.telemetry.setSession(token);
-		});
 	}
 
 	getRandomFruitIndex(limit: number = 5) {
@@ -500,6 +566,10 @@ export class GameState {
 	setStatus(newStatus: GameStatus) {
 		const oldStatus = this.status;
 		this.status = newStatus;
+
+		if (newStatus !== 'playing') {
+			this.clearShakeTimeouts();
+		}
 
 		if (newStatus === 'playing') {
 			if (oldStatus !== 'playing') {
@@ -519,7 +589,9 @@ export class GameState {
 
 	destroy() {
 		this.status = 'gameover'; // Ensure loop stops and cleanup occurs
-		this.leaderboard.destroy();
+		this.clearShakeTimeouts();
+		this.clearMergeNotices();
+		this.audioManager?.destroy();
 		if (this.animationFrameId) {
 			cancelAnimationFrame(this.animationFrameId);
 			this.animationFrameId = null;

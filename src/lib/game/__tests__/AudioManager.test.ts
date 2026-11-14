@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AudioManager } from '../AudioManager.svelte';
 import { Howler } from 'howler';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AudioManager } from '../AudioManager.svelte';
 
 // ---------------------------------------------------------------------------
 // Howler mock
@@ -16,13 +16,15 @@ type MockHowlInstance = {
 	play: ReturnType<typeof vi.fn>;
 	volume: ReturnType<typeof vi.fn>;
 	rate: ReturnType<typeof vi.fn>;
+	unload: ReturnType<typeof vi.fn>;
 	_customCooldown?: number;
 };
 
 const createMockHowlInstance = (): MockHowlInstance => ({
 	play: vi.fn().mockReturnValue(1),
 	volume: vi.fn(),
-	rate: vi.fn()
+	rate: vi.fn(),
+	unload: vi.fn()
 });
 
 // Instances indexed by the order Howl is constructed — reset between tests
@@ -93,6 +95,7 @@ describe('AudioManager', () => {
 			createMockHowlInstance(), // bump (index 0)
 			createMockHowlInstance(), // pop  (index 1)
 			createMockHowlInstance(), // spare for any extra loadSound() in the test
+			createMockHowlInstance(),
 			createMockHowlInstance()
 		];
 
@@ -202,6 +205,24 @@ describe('AudioManager', () => {
 			manager.playSound('pop', { volume: 0.5, rate: 1.2 });
 			expect(getInstance(POP_IDX).volume).toHaveBeenCalledWith(0.5, 1);
 			expect(getInstance(POP_IDX).rate).toHaveBeenCalledWith(1.2, 1);
+		});
+
+		it('plays a custom merge sound with the requested volume and rate', async () => {
+			const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:merge-sound');
+			const manager = new AudioManager({ soundsPath, poolSize: 1 });
+			await flushHowl();
+
+			const sound = new Blob([Uint8Array.from([0xff, 0xfb, 0x90, 0x64])], {
+				type: 'audio/mpeg'
+			});
+			manager.playCustomSound('apple', sound, { volume: 0.5, rate: 1.2 });
+
+			expect(createObjectURL).toHaveBeenCalledWith(sound);
+			expect(getInstance(2).play).toHaveBeenCalledOnce();
+			expect(getInstance(2).volume).toHaveBeenCalledWith(0.5, 1);
+			expect(getInstance(2).rate).toHaveBeenCalledWith(1.2, 1);
+			expect(vi.mocked(Howl).mock.calls.at(-1)?.[0].format).toEqual(['mp3']);
+			manager.destroy();
 		});
 
 		it('respects per-sound cooldowns', async () => {
