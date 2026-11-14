@@ -9,9 +9,10 @@ import FruitPresetControls from './FruitPresetControls.svelte';
 interface GameHeaderProps {
 	gameState: GameState;
 	onShake: () => void;
+	onCommunityPresetLoaded?: () => void;
 }
 
-const { gameState, onShake }: GameHeaderProps = $props();
+const { gameState, onShake, onCommunityPresetLoaded }: GameHeaderProps = $props();
 
 function handleMuteClick() {
 	gameState?.audioManager?.toggleMute();
@@ -36,7 +37,7 @@ function handleMuteClick() {
         <path d="M8 3v18M16 3v18M4 7 2 9l2 2M4 13l-2 2 2 2M20 7l2 2-2 2M20 13l2 2-2 2" />
       </svg>
     </button>
-    <FruitPresetControls />
+    <FruitPresetControls {onCommunityPresetLoaded} />
     <button onclick={handleMuteClick} aria-label="Toggle Sound">
       {#if gameState?.audioManager?.isMuted}
         <SoundOff />

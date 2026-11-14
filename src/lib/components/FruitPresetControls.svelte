@@ -8,11 +8,15 @@ import {
 import { fruitImageOverrides } from '../stores/fruitImageOverrides.svelte';
 import {
 	applyFruitPreset,
+	applyFruitPresetTemporarily,
 	exportFruitPresetFile,
 	importFruitPresetFile,
 	listFruitPresets,
+	parseFruitPresetHtmlFile,
 	saveFruitPreset
 } from '../stores/fruitPresets';
+
+let { onCommunityPresetLoaded }: { onCommunityPresetLoaded?: () => void } = $props();
 
 const FIRST_SHARED_PRESET_KEY = 'subak-fruit-preset-shared-once';
 const SHARED_PRESET_NAME = 'Shared preset';
@@ -208,6 +212,14 @@ async function handlePresetFileChange(event: Event): Promise<void> {
 	presetStatus = '';
 	presetBusy = true;
 	try {
+		if (/\.html?$/i.test(file.name)) {
+			applyFruitPresetTemporarily(await parseFruitPresetHtmlFile(file));
+			onCommunityPresetLoaded?.();
+			presetStatus = 'Community preset loaded temporarily. Save it if you want to keep it.';
+			presetDialog?.close();
+			return;
+		}
+
 		const name = await importFruitPresetFile(file);
 		presetNames = listFruitPresets();
 		await loadPreset(name);
@@ -319,7 +331,7 @@ async function loadPreset(name: string): Promise<void> {
 				<span>+ Add from file</span>
 				<input
 					type="file"
-					accept=".png,image/png,.pdf,application/pdf,.arjcfruits,application/json"
+					accept=".html,.htm,text/html,.png,image/png,.pdf,application/pdf,.arjcfruits,application/json"
 					aria-label="Add preset from file"
 					disabled={presetBusy}
 					onchange={handlePresetFileChange}

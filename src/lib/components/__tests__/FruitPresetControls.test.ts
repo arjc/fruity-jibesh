@@ -183,6 +183,31 @@ describe('FruitPresetControls', () => {
 		}
 	});
 
+	it('loads an HTML preset through the game Load button without saving it', async () => {
+		const htmlPreset = await exportFruitPresetFile({
+			name: 'Community preset',
+			names: { apple: 'Ruby' },
+			images: {},
+			sounds: {}
+		});
+		const file = new File([htmlPreset], 'community.html', { type: 'text/html' });
+		const onCommunityPresetLoaded = vi.fn();
+		const { getByRole, getByLabelText } = render(FruitPresetControls, {
+			props: { onCommunityPresetLoaded }
+		});
+
+		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
+		await fireEvent.change(getByLabelText('Add preset from file'), {
+			target: { files: [file] }
+		});
+
+		await waitFor(() => {
+			expect(fruitDisplayNames.apple).toBe('Ruby');
+			expect(onCommunityPresetLoaded).toHaveBeenCalledOnce();
+		});
+		expect(localStorage.getItem('subak-fruit-presets')).toBeNull();
+	});
+
 	it('shares an editable HTML file and saves a local copy only on its first share', async () => {
 		const originalShare = Object.getOwnPropertyDescriptor(navigator, 'share');
 		const originalCanShare = Object.getOwnPropertyDescriptor(navigator, 'canShare');
@@ -283,7 +308,12 @@ describe('FruitPresetControls', () => {
 		const { getByRole, getByLabelText } = render(FruitPresetControls);
 
 		await fireEvent.click(getByRole('button', { name: 'Load preset' }));
-		await fireEvent.change(getByLabelText('Add preset from file'), {
+		const fileInput = getByLabelText('Add preset from file') as HTMLInputElement;
+		expect(fileInput.accept).toContain('.html');
+		expect(fileInput.accept).toContain('.png');
+		expect(fileInput.accept).toContain('.pdf');
+		expect(fileInput.accept).toContain('.arjcfruits');
+		await fireEvent.change(fileInput, {
 			target: { files: [file] }
 		});
 

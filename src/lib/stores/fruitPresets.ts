@@ -685,7 +685,7 @@ export async function importFruitPresetFile(file: File): Promise<string> {
 	const isPdf = lowerFileName.endsWith('.pdf');
 	const isLegacyPreset = lowerFileName.endsWith('.arjcfruits');
 	if (!isPng && !isPdf && !isLegacyPreset) {
-		throw new Error('Choose a Fruity Jibesh PNG preset image.');
+		throw new Error('Choose a Fruity Jibesh PNG, PDF, or .arjcfruits preset file.');
 	}
 	if (file.size > (isPng ? MAX_PRESET_IMAGE_FILE_SIZE_BYTES : MAX_PRESET_FILE_SIZE_BYTES)) {
 		throw new Error('The preset file is too large to import.');

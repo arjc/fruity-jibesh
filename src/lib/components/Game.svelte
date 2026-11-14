@@ -174,8 +174,12 @@ async function handleMenuPresetFileChange(event: Event): Promise<void> {
 
 function startCommunitySharedPreset(preset: FruitPresetContent): void {
 	applyFruitPresetTemporarily(preset);
-	communitySharedPreset = true;
+	markCommunitySharedPreset();
 	gameState.setStatus('playing');
+}
+
+function markCommunitySharedPreset(): void {
+	communitySharedPreset = true;
 }
 
 interface HtmlPresetTransferMessage {
@@ -904,7 +908,13 @@ function handleShakeButton(): void {
           <span>This preset is temporary; use Save if you want to keep it.</span>
         </aside>
       {/if}
-      <div class="header"><GameHeader {gameState} onShake={handleShakeButton} /></div>
+      <div class="header">
+        <GameHeader
+          {gameState}
+          onShake={handleShakeButton}
+          onCommunityPresetLoaded={markCommunitySharedPreset}
+        />
+      </div>
       <div class="sidebar"><GameSidebar {gameState} /></div>
 
       <div
